@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "X3fPOHKJEng=",
+  "dgSpecHash": "v2YsMfZEn4k=",
   "success": true,
-  "projectFilePath": "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+  "projectFilePath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\LuisNg\\.nuget\\packages\\azure.core\\1.38.0\\azure.core.1.38.0.nupkg.sha512",
     "C:\\Users\\LuisNg\\.nuget\\packages\\azure.identity\\1.11.4\\azure.identity.1.11.4.nupkg.sha512",

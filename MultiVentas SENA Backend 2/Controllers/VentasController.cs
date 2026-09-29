@@ -182,14 +182,14 @@ namespace MultiVentasPOS.Controllers
                 //    ROWLOCK  → bloqueo a nivel de fila, no de tabla
                 // --------------------------------------------------------
                 var idsList = string.Join(",", idsProductos);
-
+                #pragma warning disable EF1002
                 var productos = await _context.Productos
                     .FromSqlRaw($@"
                         SELECT * FROM productos WITH (UPDLOCK, ROWLOCK)
                         WHERE id_producto IN ({idsList})
                     ")
                     .ToDictionaryAsync(p => p.IdProducto);
-
+                    #pragma warning restore EF1002
                 // --------------------------------------------------------
                 // 4. Validar existencia
                 // --------------------------------------------------------

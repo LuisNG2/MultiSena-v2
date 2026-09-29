@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {}
+    "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {}
   },
   "projects": {
-    "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {
+    "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+        "projectUniqueName": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
         "projectName": "MultiVentasPOS",
-        "projectPath": "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+        "projectPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
         "packagesPath": "C:\\Users\\LuisNg\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\LuisNg\\Desktop\\MultiSenaAPK\\MultiVentas SENA Backend 2\\obj\\",
+        "outputPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
