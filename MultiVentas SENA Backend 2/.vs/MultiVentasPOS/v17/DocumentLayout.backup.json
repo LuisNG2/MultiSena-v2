@@ -1,0 +1,126 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\models\\usuario.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:models\\usuario.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\controllers\\api\\usuarioscontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:controllers\\api\\usuarioscontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\models\\userrequest.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:models\\userrequest.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\models\\venta.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:models\\venta.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|c:\\users\\usuario\\source\\repos\\multiventaspos\\data\\appdbcontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{22425AC1-C1F3-43B9-A15C-7DE978AD138C}|MultiVentasPOS.csproj|solutionrelative:data\\appdbcontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 2,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{75188d03-9892-4ae2-abf1-207126247ce5}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "UsuariosController.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Controllers\\Api\\UsuariosController.cs",
+              "RelativeDocumentMoniker": "Controllers\\Api\\UsuariosController.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Controllers\\Api\\UsuariosController.cs*",
+              "RelativeToolTip": "Controllers\\Api\\UsuariosController.cs*",
+              "ViewState": "AgIAAGcAAAAAAAAAAAAQwHEAAAAJAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T18:51:37.804Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Usuario.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\Usuario.cs",
+              "RelativeDocumentMoniker": "Models\\Usuario.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\Usuario.cs*",
+              "RelativeToolTip": "Models\\Usuario.cs*",
+              "ViewState": "AgIAAA4AAAAAAAAAAAAIwBYAAAAXAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T18:50:48.229Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "UserRequest.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\UserRequest.cs",
+              "RelativeDocumentMoniker": "Models\\UserRequest.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\UserRequest.cs",
+              "RelativeToolTip": "Models\\UserRequest.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABoAAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T15:33:38.872Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Program.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Program.cs",
+              "RelativeDocumentMoniker": "Program.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Program.cs",
+              "RelativeToolTip": "Program.cs",
+              "ViewState": "AgIAAJsAAAAAAAAAAAAAAIsAAAARAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T15:29:12.04Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "Venta.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\Venta.cs",
+              "RelativeDocumentMoniker": "Models\\Venta.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Models\\Venta.cs",
+              "RelativeToolTip": "Models\\Venta.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABMAAABUAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T15:27:50.928Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "AppDbContext.cs",
+              "DocumentMoniker": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Data\\AppDbContext.cs",
+              "RelativeDocumentMoniker": "Data\\AppDbContext.cs",
+              "ToolTip": "C:\\Users\\Usuario\\source\\repos\\MultiVentasPOS\\Data\\AppDbContext.cs",
+              "RelativeToolTip": "Data\\AppDbContext.cs",
+              "ViewState": "AgIAADIAAAAAAAAAAAAwwBIAAAAcAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-12T15:26:42.241Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

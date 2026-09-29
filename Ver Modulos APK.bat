@@ -1,0 +1,1 @@
+Explorer.exe ".\MultiVentas POS Frontend\android\app\src\main\assets\public"

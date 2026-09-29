@@ -1,0 +1,17 @@
+<!-- icon-pin.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" viewBox="0 0 24 24">
+  <style>
+    /* Animación: pulso infinito */
+    .pulse {
+      animation: pulseAnim 1.5s infinite;
+      transform-origin: center;
+    }
+    @keyframes pulseAnim {
+      0%   { transform: scale(1); }
+      50%  { transform: scale(1.2); }
+      100% { transform: scale(1); }
+    }
+  </style>
+  <path class="pulse" fill="white"
+        d="M16 3a1 1 0 0 1 .93.64l2.5 6a1 1 0 0 1-.93 1.36H14v6.59l2.3 2.3a1 1 0 0 1-1.42 1.42l-2.3-2.3-2.3 2.3a1 1 0 0 1-1.42-1.42l2.3-2.3V11H5.5a1 1 0 0 1-.93-1.36l2.5-6A1 1 0 0 1 8 3h8z"/>
+</svg>

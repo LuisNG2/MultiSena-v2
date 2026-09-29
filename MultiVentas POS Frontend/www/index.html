@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>POS MultiVentas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+</head>
+<body>
+
+<!-- ============================================================
+     LOGIN MODAL
+     ============================================================ -->
+<div id="modalLogin" class="modal" data-no-esc="false" style="display:none;">
+  <div class="modal-content" role="dialog" aria-labelledby="loginTitle" aria-modal="true">
+    <span id="cerrarLogin" class="cerrar-modal" title="Cerrar">✕</span>
+    <h2 id="loginTitle">Iniciar sesión</h2>
+    <form id="formLogin" class="form-contacto" style="max-width:360px;">
+      <div class="form-row">
+        <label for="loginUsuario">Usuario</label>
+        <input id="loginUsuario" type="text" autocomplete="username" required />
+      </div>
+      <div class="form-row">
+        <label for="loginClave">Contraseña</label>
+        <input id="loginClave" type="password" autocomplete="current-password" required />
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button type="submit" class="btn">Entrar</button>
+      </div>
+      <p id="loginError" class="error-msg" style="display:none; color:#dc2626; margin-top:8px;">Credenciales incorrectas</p>
+    </form>
+  </div>
+</div>
+
+<!-- ============================================================
+     BOOTSTRAP MODAL - Solo aparece si no hay usuarios en la BD
+     ============================================================ -->
+<div id="modalBootstrap" class="modal" data-no-esc="true" style="display:none;">
+    <div class="modal-content" role="dialog" aria-labelledby="bootstrapTitle" aria-modal="true">
+        <h2 id="bootstrapTitle">🚀 Configuración Inicial</h2>
+
+        <p style="color: #64748b; margin-bottom: 16px; font-size: 14px;">
+            Es la primera vez que se ejecuta el sistema. Crea el usuario <strong>Administrador</strong>
+            para comenzar a usar MultiVentas POS.
+        </p>
+
+        <form id="formBootstrap" class="form-contacto" style="max-width:360px;">
+            <div class="form-row">
+                <label for="bootNombre">👤 Nombre completo</label>
+                <input id="bootNombre" type="text" placeholder="Ej: Administrador Principal" required maxlength="100">
+            </div>
+            <div class="form-row">
+                <label for="bootCorreo">📧 Correo electrónico</label>
+                <input id="bootCorreo" type="email" placeholder="admin@tunegocio.com" required maxlength="100" autocomplete="username">
+            </div>
+            <div class="form-row">
+                <label for="bootPassword">🔑 Contraseña</label>
+                <input id="bootPassword" type="password" placeholder="Mínimo 6 caracteres" required minlength="6" maxlength="100" autocomplete="new-password">
+            </div>
+            <div class="form-row">
+                <label for="bootPassword2">🔑 Confirmar contraseña</label>
+                <input id="bootPassword2" type="password" placeholder="Repite la contraseña" required minlength="6" maxlength="100" autocomplete="new-password">
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end; margin-top: 12px;">
+                <button type="submit" class="btn">🚀 Crear Administrador</button>
+            </div>
+            <p id="bootstrapError" class="error-msg" style="display:none; color:#dc2626; margin-top:8px;"></p>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================================
+     HEADER
+     ============================================================ -->
+<header class="header-multiventas">
+  <div class="header-left">
+    <button id="btnMenu" class="hamburger" title="Abrir menú">☰</button>
+    <p id="titulo-vista" class="titulo-vista">Selecciona una vista</p>
+  </div>
+
+  <div class="header-right">
+    <div id="estadoConexion" class="estado-conexion">🟢 Conectado</div>
+    <button id="btnTema" class="btn-icon" title="Cambiar Tema" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer; margin-right:10px;">🌙</button>
+    <div class="reloj" id="relojHeader">11:24</div>
+    <button id="btnClearStorage" class="btn danger limpiar-btn">
+      <span class="texto">Limpiar MultiVentas</span> 🧹
+    </button>
+    <button onclick="logout()" class="btn ghost logout-btn" title="Cerrar sesión">
+      🚪 <span class="texto">Salir</span>
+    </button>
+  </div>
+</header>
+
+<!-- ============================================================
+     SIDEBAR
+     ============================================================ --><aside class="sidebar expanded" id="sidebar" aria-label="Barra lateral">
+  <div class="sidebar-top">
+    <h3 class="logo">MultiVentas</h3>
+    <button id="btnFixSidebar" class="fix-btn" title="Fijar menú">📌</button>
+  </div>
+  <div class="sidebar-quick-actions"></div>   
+  <div class="sidebar-scroll">
+    <nav>
+      <ul>
+        <li><button class="active" data-vista="inicio">🏠 <span class="text">Inicio</span></button></li>
+
+        <li class="has-submenu">
+          <button type="button" aria-expanded="false">💳 <span class="text">Ventas</span></button>
+          <ul class="submenu" aria-label="Submenú Ventas">
+            <li><a href="#" data-vista="ventas">🆕 <span class="text">Nueva venta</span></a></li>
+            <li><a href="#" data-vista="historial">✍️ <span class="text">Historial de ventas</span></a></li>
+          </ul>
+        </li>
+
+        <li class="has-submenu">
+          <button type="button" aria-expanded="false">📦 <span class="text">Inventario</span></button>
+          <ul class="submenu" aria-label="Submenú Inventario">
+            <li><a href="#" data-vista="inventario">🍎 <span class="text">Productos</span></a></li>
+            <li><a href="#" data-vista="categorias">🍡 <span class="text">Categorías</span></a></li>
+          </ul>
+        </li>
+
+        <li class="has-submenu">
+          <button type="button" aria-expanded="false">👥 <span class="text">Clientes</span></button>
+          <ul class="submenu" aria-label="Submenú Clientes">
+            <li><a href="#" data-vista="clientes">📋 <span class="text">Listado</span></a></li>
+            <li><a href="#" data-vista="fidelizacion">🔝 <span class="text">Fidelización</span></a></li>
+          </ul>
+        </li>
+
+        <li id="menuUsuarios" hidden>
+            <button data-vista="usuarios">👤 <span class="text">Usuarios</span></button>
+        </li>
+
+        <li><button data-vista="reportes">📊 <span class="text">Reportes</span></button></li>
+        <li><button data-vista="config">⚙️ <span class="text">Configuración</span></button></li>
+
+        <li class="has-submenu">
+          <button type="button" aria-expanded="false">📚 <span class="text">Información</span></button>
+          <ul class="submenu" aria-label="Submenú Información">
+            <li><a href="#" data-vista="acerca">ℹ️ <span class="text">Acerca de</span></a></li>
+            <li><a href="#" data-vista="quienes">👥 <span class="text">Quiénes somos</span></a></li>
+            <li><a href="#" data-vista="contacto">📞 <span class="text">Contáctanos</span></a></li>
+            <li><a href="#" data-vista="tratamiento">📄 <span class="text">Tratamiento de datos</span></a></li>
+          </ul>
+        </li>
+      </ul>
+    </nav>
+  </div>
+</aside>
+
+<!-- Overlay para cerrar el menú al hacer clic fuera -->
+<div id="overlay" class="overlay"></div>
+
+<!-- ============================================================
+     MAIN: contenedor con todas las vistas
+     ============================================================ -->
+<main id="contenedor" aria-live="polite">
+
+<!-- ==================== INICIO / DASHBOARD ==================== -->
+<section id="vista-inicio" class="vista" hidden>
+    <div class="panel">
+        <h2>📊 Dashboard MultiVentas POS</h2>
+
+        <!-- Filtros de período -->
+          <div class="dashboard-filtros">
+              <button class="btn-periodo active" data-periodo="hoy">📅 Hoy</button>
+              <button class="btn-periodo" data-periodo="semana">📆 Semana</button>
+              <button class="btn-periodo" data-periodo="mes">🗓️ Mes</button>
+              <button class="btn-periodo" data-periodo="año">📊 Año</button>
+          </div>
+
+                 <!-- Tarjetas de resumen -->
+                  <div id="resumenReportes" class="resumen-grid">
+                      <div class="card-resumen azul">
+                          <h4 id="dashIngresosTitulo">Ingresos del Mes</h4>
+                          <p id="dashIngresos">$0</p>
+                      </div>
+                      <div class="card-resumen verde">
+                          <h4 id="dashVentasTitulo">Ventas del Mes</h4>
+                          <p id="dashVentas">0</p>
+                      </div>
+                      <div class="card-resumen celeste">
+                          <h4 id="dashTicketTitulo">Ticket Promedio</h4>
+                          <p id="dashTicket">$0</p>
+                      </div>
+                      <div class="card-resumen gris">
+                          <h4 id="dashProductosTitulo">Productos Vendidos</h4>
+                          <p id="dashProductos">0</p>
+                      </div>
+                  </div>
+
+        <!-- Gráficos -->
+        <div class="graficos-reportes">
+            <div class="grafico-card">
+                <h4>📈 Ventas de los últimos 7 días</h4>
+                <canvas id="graficoVentasSemana" class="grafico-pequeno"></canvas>
+            </div>
+            <div class="grafico-card">
+                <h4>🥧 Ventas por método de pago</h4>
+                <canvas id="graficoMetodosPago" class="grafico-pequeno"></canvas>
+            </div>
+        </div>
+
+        <!-- Top productos + Últimas ventas en 2 columnas -->
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap:20px; margin-top:20px;">
+            
+            <div>
+                <h3>🏆 Top 5 Productos del Mes</h3>
+                <table class="tabla-carrito" id="tablaTopProductos">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;">#</th>
+                            <th>Producto</th>
+                            <th style="text-align:center;">Vendidos</th>
+                            <th style="text-align:right;">Generado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="4" style="text-align:center; color:#64748b;">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div>
+                <h3>🕐 Últimas Ventas</h3>
+                <table class="tabla-carrito" id="tablaReportes">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Cliente</th>
+                            <th style="text-align:center;">Items</th>
+                            <th style="text-align:right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="4" style="text-align:center; color:#64748b;">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+  <!-- ==================== VENTAS ==================== -->
+  <section id="vista-ventas" class="vista" hidden>
+    <div class="ventas-tabs">
+      <ul id="tabs">
+        <li class="tab" data-id="venta1">
+          <span class="label" contenteditable="false" tabindex="0" title="Doble clic para renombrar">Venta 1</span>
+          <span class="badge" data-badge="venta1">0</span>
+          <span class="cerrar" title="Cerrar">✕</span>
+        </li>
+        <li id="nuevaVenta" class="tab">➕ Nueva Venta</li>
+        <li id="cerrarTodas" class="tab cerrar-todas">🗑 Cerrar todas</li>
+      </ul>
+    </div>
+
+    <div id="splitRoot">
+      <!-- Panel izquierdo: catálogo -->
+      <section class="catalogo split-panel" id="productos" aria-label="Catálogo de productos">
+          <div class="vista-controles">
+              <div class="search">
+                  <input id="buscador" 
+                        type="text" 
+                        placeholder="Buscar producto..." 
+                        data-buscador
+                        data-tabla="catalogoProductos"
+                        data-on-scan="onScanCatalogo" />
+                  <button id="btnClearSearch" class="clear-btn" aria-label="Limpiar búsqueda">✖</button>
+              </div>
+
+              <!-- 🆕 Filtro por categoría -->
+              <select id="filtroCategoria" class="filtro-categoria" aria-label="Filtrar por categoría">
+                  <option value="">📂 Todas las categorías</option>
+              </select>
+
+              <button id="btnToggle" class="btn small" aria-label="Cambiar vista">📋 Cambiar vista</button>
+          </div>
+
+          <div class="productos lista" id="catalogoProductos">
+              <!-- productos -->
+          </div>
+      </section>
+
+      <!-- Divider -->
+      <div class="split-divider"><div class="bar"></div></div>
+
+      <!-- Panel derecho: carrito -->
+      <section class="ventas-contenedor split-panel" id="contenedor-ventas" aria-label="Carritos de ventas">
+        <div class="venta active" id="venta1">
+          <div class="carrito">
+            <h3>Venta 1</h3>
+            <div class="contenido-carrito">
+              <table class="tabla-carrito">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Precio</th>
+                    <th>Cantidad</th>
+                    <th>Subtotal</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody class="carrito-body"></tbody>
+              </table>
+            </div>
+            <div class="resumen">
+              <p class="impuesto">Impuesto (19%): <strong>$0</strong></p>
+              <p class="total">Total: <strong>$0</strong></p>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+              <button class="btn finalize">Finalizar Venta</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ==================== HISTORIAL ==================== -->
+  <section id="vista-historial" class="vista" hidden>
+    <div class="panel">
+      <h2>📜 Historial de Ventas</h2>
+
+      <!-- Filtros -->
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-bottom:16px;">
+        <div class="form-row" style="flex:1; min-width:140px;">
+          <label>Desde:</label>
+          <input type="date" id="histDesde">
+        </div>
+        <div class="form-row" style="flex:1; min-width:140px;">
+          <label>Hasta:</label>
+          <input type="date" id="histHasta">
+        </div>
+        <div class="form-row" style="flex:1; min-width:140px;">
+          <label>Estado:</label>
+          <select id="histEstado">
+            <option value="">Todos</option>
+            <option value="Completada">Completada</option>
+            <option value="Anulada">Anulada</option>
+          </select>
+        </div>
+        <div class="form-row" style="flex:1; min-width:180px;">
+          <label>Buscar factura:</label>
+          <input type="text"
+              id="histBuscar"
+              placeholder="FAC-..."
+              data-buscador
+              data-tabla="tablaHistorial">
+        </div>
+        <button class="btn" id="btnHistFiltrar">🔍 Filtrar</button>
+        <button class="btn ghost" id="btnHistLimpiar">Limpiar</button>
+      </div>
+
+      <!-- Tabla -->
+      <div style="overflow-x:auto;">
+        <table class="tabla-carrito" id="tablaHistorial">
+          <thead>
+            <tr>
+              <th>Factura</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Usuario</th>
+              <th style="text-align:center;">Items</th>
+              <th style="text-align:right;">Total</th>
+              <th>Método</th>
+              <th>Estado</th>
+              <th style="width: 120px; text-align:center;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="9" style="text-align:center; padding:20px; color:#64748b;">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== INVENTARIO ==================== -->
+  <section id="vista-inventario" class="vista" hidden>
+    <div class="panel">
+      <h2>Gestión de Inventario</h2>
+      <div id="resumenInventario" class="resumen-grid"></div>
+
+        <div class="acciones-clientes">
+            <button class="btn" id="btnNuevoProducto">➕ Nuevo Producto</button>
+            <button class="btn ghost" id="btnImportarProductos">📥 Importar masivo</button>
+
+            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
+                <input type="text"
+                    id="buscarProducto"
+                    placeholder="🔍 Buscar producto... (/)"
+                    data-buscador
+                    data-tabla="tablaProductos">
+              <span id="contadorProductos" class="buscador-contador"></span>
+                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+            </div>
+
+            <span class="buscador-contador" id="contadorProductos"></span>
+        </div>
+      <table class="tabla-carrito" id="tablaProductos">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Nombre</th>
+            <th>Categoría</th>
+            <th>Precio</th>
+            <th>Stock</th>
+            <th style="width: 200px; text-align:center;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== CATEGORÍAS ==================== -->
+  <section id="vista-categorias" class="vista" hidden>
+    <div class="panel">
+      <h2>🏷️ Gestión de Categorías</h2>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+            <button class="btn" id="btnNuevaCategoria">➕ Nueva Categoría</button>
+
+            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
+                <input type="text"
+                      id="buscarCategoria"
+                      placeholder="🔍 Buscar categoría... (/)"
+                      data-buscador
+                      data-tabla="tablaCategorias">
+                <span id="contadorCategorias" class="buscador-contador"></span>
+                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+            </div>
+
+            <span class="buscador-contador" id="contadorCategorias"></span>
+        </div>
+
+      <table class="tabla-carrito" id="tablaCategorias">
+        <thead>
+          <tr>
+            <th style="width:60px;">ID</th>
+            <th>Nombre</th>
+            <th>Descripción</th>
+            <th style="width:100px; text-align:center;">Productos</th>
+            <th style="width:200px; text-align:center;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="5" style="text-align:center; padding:20px; color:#64748b;">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== CLIENTES ==================== -->
+  <section id="vista-clientes" class="vista" hidden>
+    <div class="panel">
+      <h2>Gestión de Clientes</h2>
+
+      <div id="resumenClientes" class="resumen-grid"></div>
+
+      <div class="acciones-clientes">
+          <button class="btn" id="btnNuevoCliente">➕ Nuevo Cliente</button>
+
+          <div class="buscador-universal" style="flex: 1; max-width: 420px;">
+              <input type="text"
+                  id="buscarCliente"
+                  placeholder="🔍 Buscar cliente... (/)"
+                  data-buscador
+                  data-tabla="tablaClientes">
+            <span id="contadorClientes" class="buscador-contador"></span>
+              <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+          </div>
+
+          <span class="buscador-contador" id="contadorClientes"></span>
+      </div>
+
+      <table class="tabla-carrito" id="tablaClientes">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Correo</th>
+            <th>Teléfono</th>
+            <th>Ciudad</th>
+            <th>Tipo</th>
+            <th style="width: 200px; text-align:center;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== FIDELIZACIÓN ==================== -->
+  <section id="vista-fidelizacion" class="vista" hidden>
+    <div class="panel"><h2>Fidelización</h2><p>(Demo)</p></div>
+  </section>
+
+  <!-- ==================== REPORTES ==================== -->
+  <section id="vista-reportes" class="vista" hidden>
+    <div class="panel">
+      <h2>📑 Reportes y análisis detallados</h2>
+      <p>Aquí podrás consultar reportes exportables, filtros avanzados y análisis de ventas por fechas.</p>
+    </div>
+  </section>
+
+  <!-- ==================== USUARIOS ==================== -->
+<section id="vista-usuarios" class="vista" hidden>
+    <div class="panel">
+        <h2>👤 Gestión de Usuarios</h2>
+
+        <div id="resumenUsuarios" class="resumen-grid"></div>
+
+        <div class="acciones-clientes">
+            <button class="btn" id="btnNuevoUsuario">➕ Nuevo Usuario</button>
+
+            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
+                <input type="text"
+                      id="buscarUsuario"
+                      data-buscador
+                      data-tabla="tablaUsuarios" 
+                      data-contador="contadorUsuarios"
+                      placeholder="Buscar usuario por nombre, correo o rol...">
+                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+            </div>
+
+            <span class="buscador-contador" id="contadorUsuarios"></span>
+        </div>
+
+        <table class="tabla-carrito" id="tablaUsuarios">
+            <thead>
+                <tr>
+                    <th>Nombre</th>
+                    <th>Correo</th>
+                    <th>Rol</th>
+                    <th style="text-align:center;">Estado</th>
+                    <th>Creado</th>
+                    <th style="width: 200px; text-align:center;">Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td colspan="6" style="text-align:center; padding:20px; color:#64748b;">Cargando...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+  <!-- ==================== CONFIGURACIÓN ==================== -->
+  <section id="vista-config" class="vista" hidden>
+    <div class="panel"><h2>Configuración</h2><p>(Demo)</p></div>
+  </section>
+
+  <!-- ==================== ACERCA ==================== -->
+  <section id="vista-acerca" class="vista" hidden>
+    <div class="panel">
+      <h2>Acerca de MultiVentas</h2>
+      <p>MultiVentas POS es un sistema de punto de venta desarrollado por Luis Alfonso Jaramillo, aprendiz del <strong>SENA</strong>,
+      diseñado para facilitar la gestión de ventas, inventarios y clientes en negocios pequeños y medianos.</p>
+      <p>Versión 1.0 — Proyecto formativo del programa <strong>Análisis y Desarrollo de Software</strong>.</p>
+    </div>
+  </section>
+
+  <!-- ==================== QUIÉNES SOMOS ==================== -->
+  <section id="vista-quienes" class="vista" hidden>
+    <div class="panel">
+      <h2>Quiénes Somos</h2>
+      <p>Somos un equipo de estudiantes del <strong>del SENA</strong>,
+      comprometidos con la innovación y el desarrollo de soluciones tecnológicas eficientes.</p>
+      <p>Este software fue creado como parte de nuestro proceso de formación, aplicando metodologías ágiles e
+      integración de módulos funcionales.</p>
+    </div>
+  </section>
+
+  <!-- ==================== CONTACTO ==================== -->
+  <section id="vista-contacto" class="vista" hidden>
+    <div class="panel">
+      <h2>Contáctanos</h2>
+      <p>¿Tienes preguntas o sugerencias? ¡Nos encantaría escucharte!</p>
+      <form class="form-contacto" onsubmit="event.preventDefault(); toast('Mensaje enviado correctamente'); this.reset();">
+        <label>Nombre:<br><input type="text" required></label><br>
+        <label>Correo electrónico:<br><input type="email" required></label><br>
+        <label>Mensaje:<br><textarea rows="4" required></textarea></label><br>
+        <button class="btn">Enviar mensaje</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ==================== TRATAMIENTO DE DATOS ==================== -->
+  <section id="vista-tratamiento" class="vista" hidden>
+    <div class="panel">
+      <h2>Tratamiento de Datos</h2>
+      <p>De acuerdo con la <strong>Ley 1581 de 2012</strong>, MultiVentas POS protege la privacidad y seguridad de los datos personales.
+      La información recolectada se utiliza únicamente para la gestión de ventas y control de inventario.</p>
+      <p>El usuario puede solicitar la actualización o eliminación de sus datos personales en cualquier momento.</p>
+      <p><em>Para más información, consulte nuestra política completa de tratamiento de datos.</em></p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================================================
+     FOOTER
+     ============================================================ -->
+<footer></footer>
+
+<!-- Botón flotante carrito -->
+<button class="cart-fab" id="cartFab" title="Ver carrito">🛒 <span id="cartCount"></span></button>
+
+<!-- ============================================================
+     MODALES
+     ============================================================ -->
+
+<!-- Modal Finalizar Venta -->
+<div id="modalFinalizarVenta" class="modal" style="display:none;">
+  <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="tituloFinalizar">
+    <span class="cerrar-modal" id="cerrarModalFinalizar">✕</span>
+    <h3 id="tituloFinalizar">💳 Finalizar Venta</h3>
+
+    <form id="formFinalizarVenta" class="form-cliente">
+      <div class="form-row">
+        <label>👤 Cliente (opcional):</label>
+        <select id="finCliente">
+          <option value="">— Cliente anónimo —</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>💵 Método de pago:</label>
+        <select id="finMetodoPago" required>
+          <option value="Efectivo">Efectivo</option>
+          <option value="Tarjeta">Tarjeta</option>
+          <option value="Transferencia">Transferencia</option>
+          <option value="Mixto">Mixto</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>🏷️ Descuento ($):</label>
+        <input type="number" id="finDescuento" min="0" value="0" step="0.01">
+      </div>
+
+      <div class="form-row" style="grid-column: 1 / -1;">
+        <label>📝 Nota (opcional):</label>
+        <textarea id="finNota" rows="2" placeholder="Ej: Venta al por mayor..."></textarea>
+      </div>
+
+      <!-- Resumen -->
+      <div style="grid-column: 1 / -1; background: rgba(37,99,235,0.08); padding: 12px; border-radius: 8px; margin-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span>Items:</span>
+          <strong id="finResumenItems">0</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span>Subtotal:</span>
+          <strong id="finResumenSubtotal">$0</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span>Impuesto (19%):</span>
+          <strong id="finResumenImpuesto">$0</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span>Descuento:</span>
+          <strong id="finResumenDescuento">-$0</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 6px;">
+          <span style="font-size: 16px;">TOTAL:</span>
+          <strong id="finResumenTotal" style="font-size: 18px; color: #dc2626;">$0</strong>
+        </div>
+      </div>
+
+      <div class="form-buttons" style="grid-column: 1 / -1;">
+        <button type="button" class="btn ghost" id="btnCancelarFinalizar">Cancelar</button>
+        <button type="submit" class="btn finalize">✅ Confirmar Venta</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Detalle de Venta -->
+<div id="modalDetalleVenta" class="modal" style="display:none;">
+  <div class="modal-content" role="dialog" aria-modal="true">
+    <span class="cerrar-modal" id="cerrarModalDetalleVenta">✕</span>
+    <h3>🧾 Detalle de Venta</h3>
+
+    <div id="detalleVentaContenido">
+      <p style="text-align:center; color:#64748b; padding:20px;">Cargando...</p>
+    </div>
+
+    <div class="form-buttons" style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+      <button type="button" class="btn ghost" id="btnCerrarDetalleVenta">Cerrar</button>
+      <button type="button" class="btn danger" id="btnAnularVenta" style="display:none;">🚫 Anular Venta</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Producto -->
+<div id="modalProducto" class="modal">
+  <div class="modal-content">
+    <span class="cerrar-modal" id="cerrarModalProducto">&times;</span>
+    <h3 id="tituloModalProducto">Nuevo Producto</h3>
+    <form id="formProducto" class="form-cliente">
+      <div class="form-row">
+        <label>🏷️ Código:</label>
+        <input type="text" id="prodCodigo" placeholder="Ej: A001" required>
+      </div>
+      <div class="form-row">
+        <label>📦 Nombre del producto:</label>
+        <input type="text" id="prodNombre" placeholder="Ej: Arroz Diana 500g" required>
+      </div>
+      <div class="form-row">
+        <label>🗂️ Categoría:</label>
+        <select id="prodCategoria">
+          <option value="">— Sin categoría —</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>💰 Precio unitario:</label>
+        <input type="number" id="prodPrecio" min="0" placeholder="Ej: 2500" required>
+      </div>
+      <div class="form-row">
+        <label>📊 Stock disponible:</label>
+        <input type="number" id="prodStock" min="0" placeholder="Ej: 100" required>
+      </div>
+      <div class="form-buttons">
+        <button class="btn" id="btnGuardarProducto">💾 Guardar</button>
+        <button class="btn ghost" id="btnCancelarProducto" type="button">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Categoría -->
+<div id="modalCategoria" class="modal">
+  <div class="modal-content">
+    <span class="cerrar-modal" id="cerrarModalCategoria">&times;</span>
+    <h3 id="tituloModalCategoria">Nueva Categoría</h3>
+    <form id="formCategoria" class="form-cliente">
+      <div class="form-row">
+        <label>🏷️ Nombre:</label>
+        <input type="text" id="catNombre" placeholder="Ej: Bebidas" required maxlength="50">
+      </div>
+      <div class="form-row">
+        <label>📝 Descripción:</label>
+        <input type="text" id="catDescripcion" placeholder="Ej: Bebidas y refrescos" maxlength="200">
+      </div>
+      <div class="form-buttons">
+        <button type="submit" class="btn" id="btnGuardarCategoria">💾 Guardar</button>
+        <button type="button" class="btn ghost" id="btnCancelarCategoria">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Cliente -->
+<div id="modalCliente" class="modal">
+  <div class="modal-content">
+    <span class="cerrar-modal" id="cerrarModalCliente">&times;</span>
+    <h3 id="tituloModalCliente">Nuevo Cliente</h3>
+    <form id="formCliente" class="form-cliente">
+      <div class="form-row">
+        <label>🆔 Documento:</label>
+        <input type="text" id="cliDocumento" placeholder="Ej: 1234567890 o NIT">
+      </div>
+      <div class="form-row">
+        <label>👤 Nombre completo:</label>
+        <input type="text" id="cliNombre" placeholder="Ej: Juan Pérez" required>
+      </div>
+      <div class="form-row">
+        <label>📧 Correo electrónico:</label>
+        <input type="email" id="cliCorreo" placeholder="cliente@correo.com">
+      </div>
+      <div class="form-row">
+        <label>📱 Teléfono:</label>
+        <input type="tel" id="cliTelefono" placeholder="Ej: 3104567890">
+      </div>
+      <div class="form-row">
+        <label>🏙️ Ciudad:</label>
+        <input type="text" id="cliCiudad" placeholder="Ej: Santa Marta">
+      </div>
+      <div class="form-row">
+        <label>📍 Dirección:</label>
+        <input type="text" id="cliDireccion" placeholder="Ej: Calle 45 #12-34">
+      </div>
+      <div class="form-row">
+        <label>🏪 Tipo de cliente:</label>
+        <select id="cliTipo">
+          <option value="Nuevo">Nuevo</option>
+          <option value="Frecuente">Frecuente</option>
+          <option value="Corporativo">Corporativo</option>
+        </select>
+      </div>
+      <div class="form-buttons">
+        <button class="btn" id="btnGuardarCliente">💾 Guardar</button>
+        <button class="btn ghost" id="btnCancelarCliente" type="button">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Usuario -->
+<div id="modalUsuario" class="modal">
+    <div class="modal-content">
+        <span class="cerrar-modal" id="cerrarModalUsuario">&times;</span>
+        <h3 id="tituloModalUsuario">Nuevo Usuario</h3>
+        <form id="formUsuario" class="form-cliente">
+            <div class="form-row">
+                <label>👤 Nombre completo:</label>
+                <input type="text" id="usuNombre" placeholder="Ej: Juan Pérez" required maxlength="100">
+            </div>
+            <div class="form-row">
+                <label>📧 Correo electrónico:</label>
+                <input type="email" id="usuCorreo" placeholder="usuario@correo.com" required maxlength="100">
+                <small id="usuCorreoFeedback" style="font-size:11px; display:none;"></small>
+            </div>
+            <div class="form-row">
+                <label>🔑 Contraseña:</label>
+                <div style="position: relative;">
+                    <input type="password" id="usuPassword" placeholder="Mínimo 6 caracteres" autocomplete="new-password" style="width:100%; padding-right: 38px;">
+                    <button type="button" id="togglePassword" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; cursor:pointer; font-size:16px; color:#64748b; padding:0;" title="Mostrar/ocultar contraseña">👁</button>
+                </div>
+                <small id="usuPasswordHelp" style="color:#64748b; font-size:11px;">Dejar en blanco para no cambiarla (solo al editar)</small>
+            </div>
+
+            <!-- 🆕 NUEVO: Confirmar contraseña -->
+            <div class="form-row" id="usuPassword2Row">
+                <label>🔑 Confirmar contraseña:</label>
+                <div style="position: relative;">
+                    <input type="password" id="usuPassword2" placeholder="Repite la contraseña" autocomplete="new-password" style="width:100%; padding-right: 38px;">
+                    <button type="button" id="togglePassword2" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; cursor:pointer; font-size:16px; color:#64748b; padding:0;" title="Mostrar/ocultar contraseña">👁</button>
+                </div>
+                <small id="usuPassword2Feedback" style="font-size:11px; display:none;"></small>
+            </div>
+            <div class="form-row">
+                <label>🏪 Rol:</label>
+                <select id="usuRol" required>
+                    <option value="">— Selecciona un rol —</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>⚡ Estado:</label>
+                <select id="usuEstado">
+                    <option value="Activo">Activo</option>
+                    <option value="Inactivo">Inactivo</option>
+                </select>
+            </div>
+            <div class="form-buttons">
+                <button type="submit" class="btn" id="btnGuardarUsuario">💾 Guardar</button>
+                <button type="button" class="btn ghost" id="btnCancelarUsuario">Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================================
+     MODAL DE IMPORTACIÓN MASIVA
+     ============================================================ -->
+<div id="modalImportar" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width: 900px;">
+        <span class="cerrar-modal" id="cerrarModalImportar">✕</span>
+        <h3>📥 Importar productos masivamente</h3>
+
+        <!-- 🆕 BARRA DE PROGRESO (fuera de los pasos) -->
+        <div id="importBarraProgreso" style="display: none; margin-bottom: 16px; padding: 12px; background: var(--bg-input); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span id="importProgresoTexto" style="font-size: 13px; color: var(--text-main); font-weight: 600;">Preparando...</span>
+                <span id="importProgresoPorcentaje" style="font-size: 13px; color: var(--color-primario); font-weight: 700;">0%</span>
+            </div>
+            <div style="width: 100%; height: 10px; background: var(--border-color); border-radius: 6px; overflow: hidden;">
+                <div id="importBarraFill" style="height: 100%; width: 0%; background: linear-gradient(90deg, var(--color-primario), #60a5fa); transition: width 0.3s ease; border-radius: 6px;"></div>
+            </div>
+            <div id="importProgresoDetalle" style="font-size: 11px; color: var(--text-muted); margin-top: 6px;"></div>
+        </div>
+
+        <!-- PASO 1 -->
+        <div id="importPaso1">
+            <p style="color: #64748b; font-size: 14px; margin-bottom: 16px;">
+                Sube un archivo Excel (.xlsx) con las columnas:<br>
+                <strong>CodigoInterno, Sku, Nombre, Categoria, PrecioVenta, StockActual, StockMinimo, ImpuestoPorcentaje, Estado</strong>
+            </p>
+
+            <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+                <a href="#" id="btnDescargarPlantilla" class="btn ghost small">⬇️ Descargar plantilla</a>
+                <label class="btn small" style="cursor: pointer;">
+                    📁 Elegir archivo
+                    <input type="file" id="importArchivo" accept=".xlsx,.xls" style="display: none;">
+                </label>
+                <span id="importNombreArchivo" style="color: #64748b; font-size: 13px;">Sin archivo seleccionado</span>
+            </div>
+
+            <div style="background: rgba(37,99,235,0.08); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+                <label style="font-weight: 600; font-size: 13px; display: block; margin-bottom: 8px;">Modo de importación:</label>
+                <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+                        <input type="radio" name="importModo" value="ambos" checked>
+                        Crear nuevos y actualizar existentes
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+                        <input type="radio" name="importModo" value="crear">
+                        Solo crear
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+                        <input type="radio" name="importModo" value="actualizar">
+                        Solo actualizar
+                    </label>
+                </div>
+            </div>
+
+            <div style="display:flex; gap:8px; justify-content: flex-end;">
+                <button type="button" class="btn ghost" id="btnCancelarImportar">Cancelar</button>
+                <button type="button" class="btn" id="btnPreviewImportar" disabled>👁 Previsualizar</button>
+            </div>
+        </div>
+
+        <!-- PASO 2: Preview -->
+        <div id="importPaso2" style="display:none;">
+            <div id="importResumen" style="margin-bottom: 16px;"></div>
+
+            <div id="importTablaPreview" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 16px; background: var(--bg-panel);">
+                <!-- La tabla se renderiza por JS -->
+            </div>
+
+            <div style="display:flex; gap:8px; justify-content: flex-end;">
+                <button type="button" class="btn ghost" id="btnVolverImportar">← Volver</button>
+                <button type="button" class="btn finalize" id="btnConfirmarImportar">✅ Confirmar importación</button>
+            </div>
+        </div>
+
+        <!-- PASO 3: Resultado -->
+        <div id="importPaso3" style="display:none;">
+            <div id="importResultado"></div>
+            <div style="display:flex; gap:8px; justify-content: flex-end; margin-top: 16px;">
+                <button type="button" class="btn" id="btnCerrarImportar">Cerrar</button>
+            </div>
+        </div>
+
+    </div>
+</div>
+<!-- Contenedor de toasts -->
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+
+
+<!-- Scripts -->
+<script src="Auth.js"></script>
+<script src="Api.js"></script>
+<script src="Buscador.js"></script>
+<script src="BuscadorUI.js"></script> 
+<script src="Escaner.js"></script> 
+<script src="App.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+
+<!-- ============================================================
+     DRAWER DEL CARRITO (solo móvil)
+     ============================================================ -->
+<div id="cartDrawer" class="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cartDrawerTitle">
+    <div class="drawer-header">
+        <h3 id="cartDrawerTitle">🛒 Carrito</h3>
+        <button id="cerrarCartDrawer" class="cerrar-modal" style="position: static; font-size: 22px;">✕</button>
+    </div>
+    <div class="drawer-body" id="cartDrawerBody">
+        <!-- Aquí se moverá el contenido del carrito activo -->
+    </div>
+</div>
+
+<!-- Backdrop del drawer -->
+<div id="cartDrawerBackdrop" class="cart-drawer-backdrop"></div>
+
+<!-- Botón flotante para abrir la configuración de IP -->
+<button onclick="document.getElementById('modal-ip').style.display='block'" 
+        style="position: fixed; bottom: 10px; right: 10px; z-index: 1000; padding: 8px; background: #666; color: white; border: none; border-radius: 5px; cursor: pointer;">
+  ⚙️ IP
+</button>
+
+<!-- Ventana modal oculta -->
+<div id="modal-ip" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1001;">
+  <div style="background: white; width: 85%; max-width: 300px; margin: 30% auto; padding: 20px; border-radius: 8px; text-align: center;">
+    <h3>Configurar Servidor Local</h3>
+    <p style="font-size: 12px; color: #666;">Ingresa la IP y puerto de la PC actual</p>
+    <input type="text" id="input-ip" placeholder="Ej: 192.168.1.50:5014" style="width: 100%; padding: 8px; margin-bottom: 15px; box-sizing: border-box;">
+    
+    <button onclick="guardarIP()" style="background: #28a745; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; margin-right: 10px;">Guardar</button>
+    <button onclick="document.getElementById('modal-ip').style.display='none'" style="background: #dc3545; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer;">Cancelar</button>
+  </div>
+</div>
+
+<script>
+  // Cargar la IP actual en el input al abrir la página
+  document.getElementById('input-ip').value = localStorage.getItem('api_ip') || '192.168.101.4:5014';
+
+  function guardarIP() {
+    const nuevaIp = document.getElementById('input-ip').value.trim();
+    if(nuevaIp) {
+      localStorage.setItem('api_ip', nuevaIp);
+      alert('IP Guardada con éxito. La aplicación se reiniciará.');
+      window.location.reload(); // Reinicia la app para aplicar la nueva URL
+    }
+  }
+</script>
+
+
+</body>
+</html>

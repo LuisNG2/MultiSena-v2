@@ -1,0 +1,4210 @@
+// ============================================================
+// App.js - MultiVentas POS
+// Lógica principal del frontend
+// ============================================================
+
+/* ============================================================
+   1. UTILIDADES
+   ============================================================ */
+
+function formatearFechaColombia(fechaISO) {
+    if (!fechaISO) return '-';
+
+    let iso = String(fechaISO);
+
+    if (iso.endsWith('Z') || iso.match(/[+-]\d{2}:\d{2}$/)) {
+        // ya tiene zona
+    } else if (iso.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+        iso = iso + 'Z';
+    } else if (iso.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)) {
+        iso = iso.replace(' ', 'T') + 'Z';
+    }
+
+    try {
+        const fecha = new Date(iso);
+        if (isNaN(fecha.getTime())) return fechaISO;
+
+        return fecha.toLocaleString('es-CO', {
+            timeZone: 'America/Bogota',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch {
+        return fechaISO;
+    }
+}
+
+const formato = n => `$${Number(n || 0).toLocaleString('es-CO')}`;
+const IMPUESTO = 0.19;
+
+function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+/* ============================================================
+   2. ESTADO GLOBAL
+   ============================================================ */
+
+const estado = {
+    carritos: { venta1: [] },
+    pestañaActiva: 'venta1',
+    vistaCatalogo: 'lista',
+    terminoBusqueda: '',
+    historial: [],
+    nombres: {},
+    clientes: [],
+    productos: [],
+    _ventasInited: false,
+    _clientesInited: false,
+    _creatingVenta: false,
+    _cargandoProductos: false
+};
+
+const STORAGE_KEYS = {
+    APP: 'pos_estado',
+    SPLIT_RATIO: 'split_ratio',
+    SPLIT_PX: 'split_ratio_px',
+    THEME: 'pos_tema',
+    DRAG_POS: 'pos_cart_position'
+};
+
+/* ============================================================
+   3. PERSISTENCIA
+   ============================================================ */
+
+function guardarEstado() {
+    try {
+        const copia = {
+            carritos: estado.carritos,
+            pestañaActiva: estado.pestañaActiva,
+            vistaCatalogo: estado.vistaCatalogo,
+            terminoBusqueda: estado.terminoBusqueda,
+            historial: estado.historial,
+            nombres: estado.nombres
+        };
+        localStorage.setItem(STORAGE_KEYS.APP, JSON.stringify(copia));
+    } catch (e) {
+        console.warn('guardarEstado error', e);
+    }
+}
+
+function restaurarEstado() {
+    try {
+        const data = localStorage.getItem(STORAGE_KEYS.APP);
+        if (!data) return;
+        const parsed = JSON.parse(data);
+        estado.carritos = parsed.carritos || { venta1: [] };
+        estado.pestañaActiva = parsed.pestañaActiva || 'venta1';
+        estado.vistaCatalogo = parsed.vistaCatalogo || 'lista';
+        estado.terminoBusqueda = parsed.terminoBusqueda || '';
+        estado.historial = parsed.historial || [];
+        estado.nombres = parsed.nombres || {};
+    } catch (e) {
+        console.warn('restaurarEstado error', e);
+    }
+}
+
+function borrarEstadoManual() {
+    if (!confirm('¿Seguro que deseas borrar todo el almacenamiento de la app?')) return;
+    Object.values(STORAGE_KEYS).forEach(k => localStorage.removeItem(k));
+    estado.carritos = { venta1: [] };
+    estado.pestañaActiva = 'venta1';
+    estado.historial = [];
+    estado.nombres = {};
+    guardarEstado();
+    cargarVista('ventas');
+}
+
+function limpiarEstadoSesion() {
+    localStorage.removeItem(STORAGE_KEYS.APP);
+
+    estado.carritos = { venta1: [] };
+    estado.pestañaActiva = 'venta1';
+    estado.vistaCatalogo = 'lista';
+    estado.terminoBusqueda = '';
+    estado.historial = [];
+    estado.nombres = {};
+    estado.productos = [];
+    estado.clientes = [];
+    estado._ventasInited = false;
+    estado._clientesInited = false;
+    estado._cargandoProductos = false;
+
+    const tabs = document.getElementById('tabs');
+    if (tabs) {
+        tabs.querySelectorAll('.tab[data-id]').forEach(t => {
+            if (t.dataset.id !== 'venta1') t.remove();
+        });
+        const tabVenta1 = tabs.querySelector('.tab[data-id="venta1"] .label');
+        if (tabVenta1) tabVenta1.textContent = 'Venta 1';
+    }
+
+    const contenedorVentas = document.getElementById('contenedor-ventas');
+    if (contenedorVentas) {
+        contenedorVentas.querySelectorAll('.venta').forEach(v => {
+            if (v.id !== 'venta1') v.remove();
+        });
+    }
+
+    console.log('🧹 Estado de sesión limpiado');
+}
+
+/* ============================================================
+   4. TOASTS Y MODALES
+   ============================================================ */
+
+function toast(msg, type = 'success') {
+    const cont = document.getElementById('toastContainer');
+    if (!cont) return;
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    cont.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 300);
+    }, 2500);
+}
+
+function showModal(modal) {
+    if (!modal) return;
+    modal.style.display = 'flex';
+    requestAnimationFrame(() => modal.classList.add('open'));
+}
+
+function hideModal(modal) {
+    if (!modal) return;
+    modal.classList.remove('open');
+    setTimeout(() => {
+        if (!modal.classList.contains('open')) modal.style.display = 'none';
+    }, 250);
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal.open').forEach(m => {
+            if (m.dataset.noEsc !== 'true') hideModal(m);
+        });
+    }
+});
+
+// ============================================================
+// REGISTRO DE USO DE VISTAS (para accesos rápidos dinámicos)
+// ============================================================
+
+const STORAGE_USO_VISTAS = 'pos_uso_vistas';
+
+/**
+ * Registra que el usuario visitó una vista.
+ * Los conteos se guardan por usuario (usando su id).
+ */
+function registrarUsoVista(idVista) {
+    // No registrar vistas de contenido informativo
+    const vistasIgnoradas = ['acerca', 'quienes', 'contacto', 'tratamiento', 'config'];
+    if (vistasIgnoradas.includes(idVista)) return;
+
+    try {
+        // Obtener el usuario actual
+        const usuarioStr = localStorage.getItem('pos_usuario');
+        if (!usuarioStr) return;
+
+        const usuario = JSON.parse(usuarioStr);
+        const idUsuario = usuario.id || usuario.idUsuario;
+        if (!idUsuario) return;
+
+        // Obtener el registro global de uso
+        const usoGlobal = JSON.parse(localStorage.getItem(STORAGE_USO_VISTAS) || '{}');
+        const usoUsuario = usoGlobal[idUsuario] || {};
+
+        // Incrementar contador
+        usoUsuario[idVista] = (usoUsuario[idVista] || 0) + 1;
+
+        // Guardar
+        usoGlobal[idUsuario] = usoUsuario;
+        localStorage.setItem(STORAGE_USO_VISTAS, JSON.stringify(usoGlobal));
+
+        console.log(`📊 Uso registrado: usuario ${idUsuario} → "${idVista}" (${usoUsuario[idVista]} veces)`);
+    } catch (e) {
+        console.warn('Error registrando uso de vista:', e);
+    }
+}
+
+/**
+ * Obtiene el top N de vistas más usadas por el usuario actual.
+ */
+function obtenerTopVistas(n = 3) {
+    try {
+        const usuarioStr = localStorage.getItem('pos_usuario');
+        if (!usuarioStr) return [];
+
+        const usuario = JSON.parse(usuarioStr);
+        const idUsuario = usuario.id || usuario.idUsuario;
+        if (!idUsuario) return [];
+
+        const usoGlobal = JSON.parse(localStorage.getItem(STORAGE_USO_VISTAS) || '{}');
+        const usoUsuario = usoGlobal[idUsuario] || {};
+
+        // Ordenar por frecuencia descendente
+        const top = Object.entries(usoUsuario)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, n)
+            .map(([vista]) => vista);
+
+        return top;
+    } catch (e) {
+        console.warn('Error obteniendo top vistas:', e);
+        return [];
+    }
+}
+
+/* ============================================================
+   5. NAVEGACIÓN DE VISTAS
+   ============================================================ */
+
+function nombreVista(id) {
+    const map = {
+        inicio: '🏠 Inicio',
+        ventas: '💳 Ventas',
+        historial: '🕓 Historial',
+        inventario: '📦 Inventario',
+        categorias: '🍡 Categorías',
+        clientes: '👥 Clientes',
+        usuarios: '👤 Usuarios',
+        fidelizacion: '🔝 Fidelización',
+        reportes: '📊 Reportes',
+        config: '⚙️ Configuración',
+        acerca: 'ℹ️ Acerca de',
+        quienes: '👥 Quiénes somos',
+        contacto: '📞 Contacto',
+        tratamiento: '📄 Tratamiento de datos'
+    };
+    return map[id] || 'Vista';
+}
+
+function cargarVista(idVista) {
+    registrarUsoVista(idVista);
+    document.querySelectorAll('.vista').forEach(v => v.hidden = true);
+
+    const vista = document.getElementById(`vista-${idVista}`);
+    const titulo = document.getElementById('titulo-vista');
+
+    if (!vista) {
+        if (titulo) titulo.textContent = 'Vista no disponible';
+        return;
+    }
+
+    vista.hidden = false;
+    if (titulo) titulo.textContent = nombreVista(idVista);
+
+    if (typeof resaltarMenuActivo === 'function') {
+        resaltarMenuActivo(idVista);
+    }
+
+    if (idVista === 'ventas') initVentas();
+    if (idVista === 'historial') renderHistorial();
+    if (idVista === 'clientes') initClientes();
+    if (idVista === 'inventario') initInventario();
+    if (idVista === 'categorias') initCategorias();
+    if (idVista === 'usuarios') initUsuarios();
+    if (idVista === 'inicio') initReportes();
+
+    // Reconectar buscadores después de renderizar
+    setTimeout(() => {
+        if (typeof BuscadorUI !== 'undefined') {
+            BuscadorUI.init();
+        }
+    }, 150);
+}
+
+/* ============================================================
+   6. PRODUCTOS DESDE LA API
+   ============================================================ */
+
+async function cargarProductosDesdeAPI() {
+    if (estado._cargandoProductos) {
+        console.log('⏳ Carga de productos ya en curso, se omite duplicado');
+        return;
+    }
+
+    const token = localStorage.getItem('pos_token');
+    if (!token) {
+        console.log('⚠️ Sin sesión, no se cargan productos');
+        return;
+    }
+
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    estado._cargandoProductos = true;
+    contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">Cargando productos...</p>`;
+
+    try {
+        const resp = await api.get('/Productos?page=1&pageSize=200');
+
+        if (!resp.ok) {
+            contenedor.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar productos.</p>`;
+            return;
+        }
+
+        const productos = (resp.data || []).filter(p => p.estado === 'Activo');
+        estado.productos = productos;
+
+        if (productos.length === 0) {
+            contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos activos.</p>`;
+            return;
+        }
+
+        contenedor.innerHTML = productos.map(p => {
+            const precioFmt = formato(p.precioVenta);
+            const sku = p.sku || p.codigoInterno;
+            const stockColor = p.stockActual <= p.stockMinimo ? '#dc2626' : '#16a34a';
+            const agotado = p.stockActual <= 0;
+
+            return `
+                <div class="producto"
+                    data-id-producto="${p.idProducto}"
+                    data-nombre="${escapeHtml(p.nombre)}"
+                    data-precio="${p.precioVenta}"
+                    data-sku="${escapeHtml(sku)}"
+                    data-categoria="${escapeHtml(p.categoriaNombre || '')}"      ← 🆕 ESTA LÍNEA
+                    data-stock="${p.stockActual}"
+                    data-veces-vendido="${p.vecesVendido || 0}">
+                    <div class="prod-info">
+                        <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
+                        <span class="prod-sku">SKU: ${escapeHtml(sku)}</span>
+                    </div>
+                    <div class="prod-precio">${precioFmt}</div>
+                    <div class="prod-stock" style="color:${stockColor};">
+                        Stock: ${p.stockActual}
+                    </div>
+                    <button class="btn agregar" ${agotado ? 'disabled' : ''}>
+                        ${agotado ? 'Agotado' : '+ Agregar'}
+                    </button>
+                </div>
+            `;
+        }).join('');
+
+        if (estado.terminoBusqueda) {
+            filtrarCatalogo(estado.terminoBusqueda);
+        }
+
+            poblarFiltroCategorias(productos);
+        
+
+        console.log(`✅ ${productos.length} productos cargados desde la API`);
+    } finally {
+        estado._cargandoProductos = false;
+    }
+}
+
+// ============================================================
+// Poblar el select de categorías con las categorías únicas
+// ============================================================
+function poblarFiltroCategorias(productos) {
+    const select = document.getElementById('filtroCategoria');
+    if (!select) return;
+
+    // Extraer categorías únicas (solo las que tienen nombre)
+    const categoriasUnicas = [...new Set(
+        productos
+            .map(p => p.categoriaNombre)
+            .filter(c => c && String(c).trim() !== '')
+    )].sort((a, b) => a.localeCompare(b, 'es'));
+
+    // Preservar la selección actual
+    const seleccionActual = select.value;
+
+    // Reconstruir el select
+    select.innerHTML = '<option value="">📂 Todas las categorías</option>' +
+        categoriasUnicas.map(cat =>
+            `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`
+        ).join('');
+
+    // Restaurar la selección
+    select.value = seleccionActual;
+
+    console.log(`📂 Filtro de categorías: ${categoriasUnicas.length} categorías cargadas`);
+}
+
+/* ============================================================
+   7. BUSCADOR DEL CATÁLOGO DE VENTAS
+   ============================================================ */
+
+function filtrarCatalogo(texto) {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const q = (texto || '').trim();
+
+    if (!q) {
+        contenedor.querySelectorAll('.producto').forEach(card => {
+            card.style.display = '';
+        });
+        return;
+    }
+
+    const cards = Array.from(contenedor.querySelectorAll('.producto'));
+    if (cards.length === 0) return;
+
+    const items = cards.map(card => ({
+        nombre: card.dataset.nombre || '',
+        sku: card.dataset.sku || '',
+        categoria: card.dataset.categoria || '',
+        _card: card
+    }));
+
+    const encontrados = Buscador.buscar(q, items, { minScore: 25 });
+    const encontradosSet = new Set(encontrados.map(e => e._card));
+
+    cards.forEach(card => {
+        card.style.display = encontradosSet.has(card) ? '' : 'none';
+    });
+}
+
+/* ============================================================
+   8. VENTAS (TABS + CARRITO)
+   ============================================================ */
+
+function initVentas() {
+    const token = localStorage.getItem('pos_token');
+    if (!token) {
+        console.log('⚠️ Sin sesión, no se inicializa Ventas');
+        return;
+    }
+
+    if (estado.productos.length === 0) {
+        cargarProductosDesdeAPI();
+    }
+
+    if (estado._ventasInited) {
+        crearVentaUI('venta1', 1);
+        activarPestaña(estado.pestañaActiva || 'venta1');
+        return;
+    }
+
+    estado._ventasInited = true;
+    if (!estado.carritos.venta1) estado.carritos.venta1 = [];
+
+    setupTabsListener();
+    setupCatalogoListener();
+    setupContenedorVentasListener();
+    setupNuevaVentaBtn();
+    setupCerrarTodasBtn();
+    setupBuscadorCatalogo();
+    setupToggleVista();
+
+    crearVentaUI('venta1', 1);
+    initSplitter();
+    activarPestaña(estado.pestañaActiva || 'venta1');
+}
+
+function setupTabsListener() {
+    const tabs = document.getElementById('tabs');
+    if (!tabs || tabs._listenerAttached) return;
+    tabs._listenerAttached = true;
+
+    tabs.addEventListener('click', e => {
+        const tabEl = e.target.closest('.tab');
+        if (!tabEl) return;
+
+        if (e.target.closest('.label')?.isContentEditable) {
+            e.stopPropagation();
+            return;
+        }
+
+        if (tabEl.id === 'nuevaVenta') {
+            crearVentaNueva();
+            return;
+        }
+
+        if (e.target.classList.contains('cerrar')) {
+            e.stopPropagation();
+            cerrarTabConConfirmacion(tabEl);
+            return;
+        }
+
+        if (tabEl.dataset.id) activarPestaña(tabEl.dataset.id);
+    });
+
+    tabs.addEventListener('dblclick', e => {
+        const label = e.target.closest('.label');
+        if (!label) return;
+        e.stopPropagation();
+        label.setAttribute('contenteditable', 'true');
+        label.focus();
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    });
+
+    tabs.addEventListener('blur', e => {
+        if (!e.target.classList.contains('label')) return;
+        e.target.setAttribute('contenteditable', 'false');
+        const tabEl = e.target.closest('.tab');
+        const id = tabEl?.dataset.id;
+        const nuevo = e.target.textContent.trim();
+        if (id && nuevo) {
+            estado.nombres[id] = nuevo;
+            guardarEstado();
+            const h3 = document.getElementById(id)?.querySelector('h3');
+            if (h3) h3.textContent = nuevo;
+        }
+    }, true);
+
+    tabs.addEventListener('keydown', e => {
+        if (e.target.classList.contains('label') && e.key === 'Enter') {
+            e.preventDefault();
+            e.target.blur();
+        }
+    });
+}
+
+function cerrarTabConConfirmacion(tabEl) {
+    const id = tabEl.dataset.id;
+    const carrito = estado.carritos[id] || [];
+    const nombre = estado.nombres?.[id] || tabEl.querySelector('.label')?.textContent || id;
+
+    if (id === 'venta1') {
+        if (carrito.length === 0 || confirm('¿Limpiar Venta 1?')) {
+            estado.carritos[id] = [];
+            renderCarrito(id);
+            guardarEstado();
+            toast('Venta 1 limpiada');
+        }
+        return;
+    }
+
+    if (carrito.length === 0 || confirm(`¿Cerrar ${nombre}? Se perderán ${carrito.length} producto(s).`)) {
+        cerrarPestaña(id);
+        toast(`Se cerró ${nombre}`);
+    }
+}
+
+function setupCatalogoListener() {
+    const catalogo = document.querySelector('.catalogo');
+    if (!catalogo || catalogo._listenerAttached) return;
+    catalogo._listenerAttached = true;
+
+    catalogo.addEventListener('click', e => {
+        if (!e.target.classList.contains('agregar')) return;
+        const card = e.target.closest('.producto');
+        if (!card) return;
+
+        const idProducto = parseInt(card.dataset.idProducto, 10);
+        const nombre = card.dataset.nombre;
+        const precio = parseFloat(card.dataset.precio) || 0;
+        const sku = card.dataset.sku;
+        const stock = parseInt(card.dataset.stock, 10) || 0;
+
+        const ventaId = estado.pestañaActiva || 'venta1';
+        agregarProducto(ventaId, { idProducto, nombre, precio, sku, stock });
+    });
+}
+
+function setupContenedorVentasListener() {
+    if (document._contenedorVentasListenerAttached) return;
+    document._contenedorVentasListenerAttached = true;
+
+    document.addEventListener('click', (e) => {
+        const ventaId = estado.pestañaActiva || 'venta1';
+
+        if (e.target.classList.contains('qty-btn')) {
+            const fila = e.target.closest('tr');
+            const sku = fila?.dataset.sku;
+            const tipo = e.target.dataset.tipo;
+            if (sku) actualizarCantidad(ventaId, sku, tipo);
+            return;
+        }
+
+        if (e.target.classList.contains('action-del')) {
+            const fila = e.target.closest('tr');
+            const sku = fila?.dataset.sku;
+            if (sku) eliminarProducto(ventaId, sku);
+            return;
+        }
+
+        if (e.target.classList.contains('finalize')) {
+            finalizarVenta(ventaId);
+            return;
+        }
+    });
+}
+
+function setupNuevaVentaBtn() {
+    // El listener está en tabs (por ID nuevaVenta)
+}
+
+function setupCerrarTodasBtn() {
+    const btn = document.getElementById('cerrarTodas');
+    if (!btn || btn._listenerAttached) return;
+    btn._listenerAttached = true;
+
+    btn.addEventListener('click', () => {
+        const ids = Object.keys(estado.carritos).filter(id => id.startsWith('venta'));
+        const conProductos = ids.filter(id => (estado.carritos[id] || []).length > 0);
+
+        if (ids.length === 0) {
+            toast('No hay pestañas para cerrar', 'error');
+            return;
+        }
+
+        const msg = conProductos.length > 0
+            ? `Se cerrarán ${ids.length} pestañas (${conProductos.length} con productos). ¿Continuar?`
+            : `¿Cerrar las ${ids.length} pestañas?`;
+
+        if (!confirm(msg)) return;
+
+        for (const id of ids) {
+            if (id === 'venta1') {
+                estado.carritos[id] = [];
+                renderCarrito(id);
+            } else {
+                delete estado.carritos[id];
+                delete estado.nombres[id];
+                document.querySelector(`.tab[data-id="${id}"]`)?.remove();
+                document.getElementById(id)?.remove();
+            }
+        }
+
+        guardarEstado();
+        actualizarConteos();
+        activarPestaña('venta1');
+        toast('✅ Pestañas cerradas');
+    });
+}
+
+function setupBuscadorCatalogo() {
+    const buscador = document.getElementById('buscador');
+    const btnClear = document.getElementById('btnClearSearch');
+    if (!buscador || buscador._listenerAttached) return;
+    buscador._listenerAttached = true;
+
+    // 🆕 Listener del filtro de categoría
+    const selectCategoria = document.getElementById('filtroCategoria');
+    if (selectCategoria && !selectCategoria._listenerAttached) {
+        selectCategoria._listenerAttached = true;
+        selectCategoria.addEventListener('change', (e) => {
+            const input = document.getElementById('buscador');
+            if (input && input._buscadorAPI && typeof input._buscadorAPI.filtrarCategoria === 'function') {
+                input._buscadorAPI.filtrarCategoria(e.target.value);
+                console.log(`📂 Filtro aplicado: "${e.target.value || 'Todas'}"`);
+            }
+        });
+    }
+
+    buscador.value = estado.terminoBusqueda || '';
+    filtrarCatalogo(buscador.value);
+    if (btnClear) btnClear.style.display = buscador.value ? 'block' : 'none';
+
+    const debounced = Buscador.crearDebounced((valor) => {
+        filtrarCatalogo(valor);
+    }, 100);
+
+    buscador.addEventListener('input', () => {
+        estado.terminoBusqueda = buscador.value;
+        debounced(buscador.value);
+        guardarEstado();
+        if (btnClear) btnClear.style.display = buscador.value ? 'block' : 'none';
+    });
+
+    if (btnClear) {
+        btnClear.addEventListener('click', () => {
+            buscador.value = '';
+            estado.terminoBusqueda = '';
+            btnClear.style.display = 'none';
+            filtrarCatalogo('');
+            guardarEstado();
+            buscador.focus();
+        });
+    }
+
+    let indiceNavegacion = -1;
+
+    buscador.addEventListener('keydown', (e) => {
+        const contenedor = document.getElementById('catalogoProductos');
+        if (!contenedor) return;
+
+        const productosVisibles = Array.from(contenedor.querySelectorAll('.producto'))
+            .filter(c => c.style.display !== 'none');
+
+        if (productosVisibles.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            indiceNavegacion = Math.min(indiceNavegacion + 1, productosVisibles.length - 1);
+            resaltarProducto(productosVisibles[indiceNavegacion]);
+        }
+
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            indiceNavegacion = Math.max(indiceNavegacion - 1, 0);
+            resaltarProducto(productosVisibles[indiceNavegacion]);
+        }
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (indiceNavegacion >= 0 && indiceNavegacion < productosVisibles.length) {
+                const card = productosVisibles[indiceNavegacion];
+                const btn = card.querySelector('.agregar');
+                if (btn && !btn.disabled) {
+                    btn.click();
+                    indiceNavegacion = -1;
+                    buscador.focus();
+                    buscador.select();
+                } else if (btn && btn.disabled) {
+                    toast('Producto agotado', 'error');
+                }
+            }
+        }
+
+        if (e.key === 'Escape') {
+            buscador.value = '';
+            estado.terminoBusqueda = '';
+            filtrarCatalogo('');
+            guardarEstado();
+            if (btnClear) btnClear.style.display = 'none';
+            indiceNavegacion = -1;
+        }
+    });
+
+    buscador.addEventListener('input', () => {
+        indiceNavegacion = -1;
+    });
+
+    function resaltarProducto(card) {
+        document.querySelectorAll('.producto.kbd-active')
+            .forEach(c => c.classList.remove('kbd-active'));
+        if (!card) return;
+        card.classList.add('kbd-active');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function setupToggleVista() {
+    const btn = document.getElementById('btnToggle');
+    const productosList = document.querySelector('#productos .productos');
+    if (!btn || !productosList || btn._listenerAttached) return;
+    btn._listenerAttached = true;
+
+    productosList.classList.remove('grid', 'lista');
+    productosList.classList.add(estado.vistaCatalogo === 'lista' ? 'lista' : 'grid');
+    btn.textContent = estado.vistaCatalogo === 'lista' ? '🔲 Vista grid' : '📋 Vista lista';
+
+    btn.addEventListener('click', () => {
+        const esGrid = productosList.classList.contains('grid');
+        const nueva = esGrid ? 'lista' : 'grid';
+        productosList.classList.toggle('grid', !esGrid);
+        productosList.classList.toggle('lista', esGrid);
+        estado.vistaCatalogo = nueva;
+        btn.textContent = nueva === 'lista' ? '🔲 Vista grid' : '📋 Vista lista';
+        guardarEstado();
+    });
+}
+
+function crearVentaUI(idVenta, numero) {
+    const tabs = document.getElementById('tabs');
+    const contenedorVentas = document.getElementById('contenedor-ventas');
+    if (!tabs || !contenedorVentas) return;
+
+    const tabExists = Boolean(document.querySelector(`.tab[data-id="${idVenta}"]`));
+    const containerExists = Boolean(document.getElementById(idVenta));
+
+    if (tabExists && containerExists) return;
+
+    const nombre = estado.nombres?.[idVenta] || `Venta ${numero}`;
+
+    if (!tabExists) {
+        const nuevaTab = document.createElement('li');
+        nuevaTab.className = 'tab';
+        nuevaTab.dataset.id = idVenta;
+
+        const cerrarBtn = idVenta === 'venta1' ? '' : '<span class="cerrar" title="Cerrar">✕</span>';
+
+        nuevaTab.innerHTML = `
+            <span class="label" contenteditable="false" tabindex="0" title="Doble clic para renombrar">${escapeHtml(nombre)}</span>
+            <span class="badge" data-badge="${idVenta}">0</span>
+            ${cerrarBtn}
+        `;
+
+        const nuevaVentaBtn = document.getElementById('nuevaVenta');
+        if (nuevaVentaBtn) tabs.insertBefore(nuevaTab, nuevaVentaBtn);
+        else tabs.appendChild(nuevaTab);
+    }
+
+    if (!containerExists) {
+        const ventaDiv = document.createElement('div');
+        ventaDiv.className = 'venta';
+        ventaDiv.id = idVenta;
+        ventaDiv.innerHTML = `
+            <div class="carrito">
+                <div class="contenido-carrito">
+                    <h3>${escapeHtml(nombre)}</h3>
+                    <table class="tabla-carrito">
+                        <thead>
+                            <tr>
+                                <th>Producto</th>
+                                <th>Precio</th>
+                                <th>Cantidad</th>
+                                <th>Subtotal</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody class="carrito-body"></tbody>
+                    </table>
+                </div>
+                <div class="resumen">
+                    <p class="impuesto">Impuesto (19%): <strong>$0</strong></p>
+                    <p class="total">Total: <strong>$0</strong></p>
+                </div>
+                <div style="display:flex; gap:8px; justify-content:flex-end;">
+                    <button class="btn finalize">Finalizar Venta</button>
+                </div>
+            </div>
+        `;
+        contenedorVentas.appendChild(ventaDiv);
+    }
+
+    renderCarrito(idVenta);
+    actualizarConteos();
+}
+
+function crearVentaNueva() {
+    if (estado._creatingVenta) return;
+    estado._creatingVenta = true;
+    setTimeout(() => estado._creatingVenta = false, 300);
+
+    const existentes = Object.keys(estado.carritos)
+        .filter(k => k.startsWith('venta'))
+        .map(numeroDesdeId);
+
+    let siguiente = existentes.length ? Math.max(...existentes) + 1 : 2;
+    while (existentes.includes(siguiente)) siguiente++;
+
+    const idVenta = `venta${siguiente}`;
+    estado.carritos[idVenta] = [];
+    crearVentaUI(idVenta, siguiente);
+    activarPestaña(idVenta);
+    guardarEstado();
+}
+
+function activarPestaña(id) {
+    crearVentaUI(id, numeroDesdeId(id));
+
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.venta').forEach(v => v.classList.remove('active'));
+
+    document.querySelector(`.tab[data-id="${id}"]`)?.classList.add('active');
+    document.getElementById(id)?.classList.add('active');
+
+    estado.pestañaActiva = id;
+    renderCarrito(id);
+    guardarEstado();
+    actualizarConteos();
+}
+
+function cerrarPestaña(id) {
+    document.querySelector(`.tab[data-id="${id}"]`)?.remove();
+    document.getElementById(id)?.remove();
+    delete estado.carritos[id];
+    delete estado.nombres[id];
+
+    if (estado.pestañaActiva === id) {
+        const otraTab = document.querySelector('.tab[data-id]');
+        activarPestaña(otraTab?.dataset.id || 'venta1');
+    }
+    guardarEstado();
+    actualizarConteos();
+}
+
+function numeroDesdeId(idVenta) {
+    const n = parseInt(String(idVenta).replace('venta', ''), 10);
+    return isNaN(n) ? 1 : n;
+}
+
+/* ============================================================
+   9. CARRITO
+   ============================================================ */
+
+function agregarProducto(idVenta, { idProducto, nombre, precio, sku, stock }) {
+    const carrito = estado.carritos[idVenta] || (estado.carritos[idVenta] = []);
+    const item = carrito.find(x => x.sku === sku);
+
+    if (item) {
+        if (stock != null && item.cantidad >= stock) {
+            toast(`Stock insuficiente. Solo hay ${stock} disponibles.`, 'error');
+            return;
+        }
+        item.cantidad += 1;
+    } else {
+        carrito.push({ idProducto, sku, nombre, precio, cantidad: 1, stock: stock || 0 });
+    }
+
+    renderCarrito(idVenta);
+    guardarEstado();
+    actualizarConteos();
+}
+
+function actualizarCantidad(idVenta, sku, tipo) {
+    const carrito = estado.carritos[idVenta] || [];
+    const item = carrito.find(x => x.sku === sku);
+    if (!item) return;
+
+    if (tipo === 'mas') {
+        if (item.stock != null && item.cantidad >= item.stock) {
+            toast(`Stock máximo alcanzado (${item.stock})`, 'error');
+            return;
+        }
+        item.cantidad += 1;
+    }
+    if (tipo === 'menos') {
+        item.cantidad = Math.max(1, item.cantidad - 1);
+    }
+
+    renderCarrito(idVenta);
+    guardarEstado();
+    actualizarConteos();
+}
+
+function eliminarProducto(idVenta, sku) {
+    const carrito = estado.carritos[idVenta] || [];
+    const item = carrito.find(x => x.sku === sku);
+
+    if (!item) return;
+
+    let mensaje = `¿Eliminar "${item.nombre}" del carrito?`;
+
+    if (item.cantidad > 1) {
+        mensaje = `¿Eliminar "${item.nombre}" del carrito?\n\n` +
+                  `Cantidad actual: ${item.cantidad}\n` +
+                  `Se eliminarán las ${item.cantidad} unidades.`;
+    }
+
+    if (!confirm(mensaje)) return;
+
+    estado.carritos[idVenta] = carrito.filter(x => x.sku !== sku);
+    renderCarrito(idVenta);
+    guardarEstado();
+    actualizarConteos();
+
+    toast(`🗑 "${item.nombre}" eliminado del carrito`, 'success');
+}
+
+function renderCarrito(idVenta) {
+    const ventaDiv = document.getElementById(idVenta);
+    if (!ventaDiv) return;
+
+    const tbody = ventaDiv.querySelector('.carrito-body');
+    const impuestoEl = ventaDiv.querySelector('.impuesto strong');
+    const totalEl = ventaDiv.querySelector('.total strong');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    const carrito = estado.carritos[idVenta] || [];
+    let total = 0;
+
+    carrito.forEach(item => {
+        const subtotal = item.precio * item.cantidad;
+        total += subtotal;
+
+        const tr = document.createElement('tr');
+        tr.dataset.sku = item.sku;
+        tr.innerHTML = `
+            <td>${escapeHtml(item.nombre)}</td>
+            <td>${formato(item.precio)}</td>
+            <td>
+                <div class="cantidad-control">
+                    <button class="qty-btn" data-tipo="menos">−</button>
+                    <span class="qty">${item.cantidad}</span>
+                    <button class="qty-btn" data-tipo="mas">+</button>
+                </div>
+            </td>
+            <td class="subtotal">${formato(subtotal)}</td>
+            <td><button class="action-del">Eliminar</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    const impuesto = Math.round(total * IMPUESTO);
+    const totalFinal = total + impuesto;
+
+    if (impuestoEl) impuestoEl.textContent = formato(impuesto);
+    if (totalEl) totalEl.textContent = formato(totalFinal);
+
+    const tab = document.querySelector(`.tab[data-id="${idVenta}"]`);
+    if (tab) tab.classList.toggle('filled', carrito.length > 0);
+
+    actualizarConteos();
+}
+
+function actualizarConteos() {
+    document.querySelectorAll('.tab .badge').forEach(b => b.textContent = '0');
+    Object.keys(estado.carritos).forEach(id => {
+        const items = (estado.carritos[id] || []).reduce((s, i) => s + i.cantidad, 0);
+        const badge = document.querySelector(`[data-badge="${id}"]`);
+        if (badge) badge.textContent = String(items);
+    });
+
+    const ventaId = estado.pestañaActiva || 'venta1';
+    const carrito = estado.carritos[ventaId] || [];
+    const totalItems = carrito.reduce((s, i) => s + i.cantidad, 0);
+    const countEl = document.getElementById('cartCount');
+    if (countEl) countEl.textContent = totalItems > 0 ? totalItems : '';
+}
+
+/* ============================================================
+   10. ESCÁNER DE CÓDIGO DE BARRAS
+   ============================================================ */
+
+async function manejarEscaneo(codigo) {
+    if (!codigo) return;
+
+    const codigoLimpio = codigo.trim().toUpperCase();
+    console.log(`📷 Buscando producto con código: "${codigoLimpio}"`);
+
+    if (!localStorage.getItem('pos_token')) {
+        console.warn('⚠️ Escaneo ignorado: sin sesión');
+        return;
+    }
+
+    const ventaId = estado.pestañaActiva || 'venta1';
+    if (!estado.carritos[ventaId]) {
+        toast('No hay un carrito activo', 'error');
+        return;
+    }
+
+    let producto = estado.productos.find(p => {
+        const sku = (p.sku || '').trim().toUpperCase();
+        const codigoInterno = (p.codigoInterno || '').trim().toUpperCase();
+        return sku === codigoLimpio || codigoInterno === codigoLimpio;
+    });
+
+    if (!producto) {
+        console.log('🔍 No está en memoria, consultando API...');
+        const resp = await api.get(`/Productos/search?q=${encodeURIComponent(codigoLimpio)}`);
+
+        if (resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+            producto = resp.data.find(p =>
+                (p.sku && p.sku.toUpperCase() === codigoLimpio) ||
+                (p.codigoInterno && p.codigoInterno.toUpperCase() === codigoLimpio)
+            ) || resp.data[0];
+        }
+    }
+
+    if (!producto) {
+        toast(`❌ Producto no encontrado: ${codigoLimpio}`, 'error');
+        reproducirBeep('error');
+        return;
+    }
+
+    if (producto.stockActual <= 0) {
+        toast(`⛔ "${producto.nombre}" está agotado`, 'error');
+        reproducirBeep('error');
+        return;
+    }
+
+    agregarProducto(ventaId, {
+        idProducto: producto.idProducto,
+        nombre: producto.nombre,
+        precio: producto.precioVenta,
+        sku: producto.sku || producto.codigoInterno,
+        stock: producto.stockActual
+    });
+
+    toast(`✅ ${producto.nombre} agregado`, 'success');
+    reproducirBeep('ok');
+    destacarProductoEnCarrito(producto.sku || producto.codigoInterno);
+
+    const buscador = document.getElementById('buscador');
+    if (buscador && buscador.value) {
+        buscador.value = '';
+        estado.terminoBusqueda = '';
+        filtrarCatalogo('');
+        guardarEstado();
+        const btnClear = document.getElementById('btnClearSearch');
+        if (btnClear) btnClear.style.display = 'none';
+    }
+}
+
+function reproducirBeep(tipo = 'ok') {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (tipo === 'ok') {
+            osc.frequency.value = 1200;
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.12);
+        } else {
+            osc.frequency.value = 300;
+            gain.gain.setValueAtTime(0.10, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.20);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.20);
+        }
+    } catch (e) {
+        console.debug('No se pudo reproducir beep:', e);
+    }
+}
+
+function destacarProductoEnCarrito(sku) {
+    const ventaId = estado.pestañaActiva || 'venta1';
+    const ventaDiv = document.getElementById(ventaId);
+    if (!ventaDiv) return;
+
+    const fila = ventaDiv.querySelector(`tr[data-sku="${sku}"]`);
+    if (!fila) return;
+
+    fila.classList.add('flash-agregado');
+    setTimeout(() => fila.classList.remove('flash-agregado'), 900);
+}
+
+/* ============================================================
+   11. FINALIZAR VENTA
+   ============================================================ */
+
+let _ventaIdEnProceso = null;
+
+async function finalizarVenta(ventaId) {
+    const carrito = estado.carritos[ventaId] || [];
+    if (carrito.length === 0) {
+        toast('El carrito está vacío', 'error');
+        return;
+    }
+
+    const sinId = carrito.filter(i => !i.idProducto);
+    if (sinId.length > 0) {
+        toast('Hay productos sin ID válido. Recarga el catálogo.', 'error');
+        return;
+    }
+
+    _ventaIdEnProceso = ventaId;
+
+    await cargarClientesEnModal();
+    actualizarResumenModal();
+
+    const modal = document.getElementById('modalFinalizarVenta');
+    showModal(modal);
+
+    const inputDescuento = document.getElementById('finDescuento');
+    inputDescuento.oninput = actualizarResumenModal;
+}
+
+async function cargarClientesEnModal() {
+    const select = document.getElementById('finCliente');
+    if (!select) return;
+
+    if (select.dataset.loaded === 'true') return;
+
+    const resp = await api.get('/Clientes');
+    if (!resp.ok) return;
+
+    const clientes = resp.data || [];
+    select.innerHTML = '<option value="">— Cliente anónimo —</option>' +
+        clientes.map(c => `<option value="${c.idCliente}">${escapeHtml(c.nombre)}${c.documento ? ` (${escapeHtml(c.documento)})` : ''}</option>`).join('');
+
+    select.dataset.loaded = 'true';
+}
+
+function actualizarResumenModal() {
+    const ventaId = _ventaIdEnProceso;
+    if (!ventaId) return;
+
+    const carrito = estado.carritos[ventaId] || [];
+    const items = carrito.reduce((s, i) => s + i.cantidad, 0);
+    const subtotal = carrito.reduce((s, i) => s + i.precio * i.cantidad, 0);
+    const impuesto = Math.round(subtotal * IMPUESTO);
+
+    const descuentoInput = document.getElementById('finDescuento');
+    let descuento = parseFloat(descuentoInput?.value) || 0;
+    if (descuento > subtotal + impuesto) {
+        descuento = subtotal + impuesto;
+        if (descuentoInput) descuentoInput.value = descuento;
+    }
+
+    const total = subtotal + impuesto - descuento;
+
+    document.getElementById('finResumenItems').textContent = items;
+    document.getElementById('finResumenSubtotal').textContent = formato(subtotal);
+    document.getElementById('finResumenImpuesto').textContent = formato(impuesto);
+    document.getElementById('finResumenDescuento').textContent = `-${formato(descuento)}`;
+    document.getElementById('finResumenTotal').textContent = formato(total);
+}
+
+async function confirmarVenta(e) {
+    e.preventDefault();
+
+    const ventaId = _ventaIdEnProceso;
+    if (!ventaId) return;
+
+    const carrito = estado.carritos[ventaId] || [];
+    if (carrito.length === 0) {
+        toast('El carrito está vacío', 'error');
+        return;
+    }
+
+    const idClienteRaw = document.getElementById('finCliente').value;
+    const metodoPago = document.getElementById('finMetodoPago').value;
+    const descuento = parseFloat(document.getElementById('finDescuento').value) || 0;
+    const nota = document.getElementById('finNota').value.trim();
+
+    const ventaDto = {
+        idCliente: idClienteRaw ? parseInt(idClienteRaw, 10) : null,
+        metodoPago: metodoPago,
+        descuentoTotal: descuento,
+        nota: nota || null,
+        detalles: carrito.map(i => ({
+            idProducto: i.idProducto,
+            cantidad: i.cantidad
+        }))
+    };
+
+    const form = document.getElementById('formFinalizarVenta');
+    const btnSubmit = form.querySelector('button[type="submit"]');
+    const textoOriginal = btnSubmit.textContent;
+    btnSubmit.disabled = true;
+    btnSubmit.textContent = '⏳ Procesando...';
+
+    const resp = await api.post('/Ventas', ventaDto);
+
+    btnSubmit.disabled = false;
+    btnSubmit.textContent = textoOriginal;
+
+    if (!resp.ok) return;
+
+    const venta = resp.data;
+    console.log('Venta creada:', venta);
+
+    hideModal(document.getElementById('modalFinalizarVenta'));
+
+    toast(`✅ Venta ${venta.codigoFactura} registrada - Total: ${formato(venta.totalFinal)}`);
+
+    estado.carritos[ventaId] = [];
+    renderCarrito(ventaId);
+    actualizarConteos();
+
+    estado.historial.push({
+        idVenta: venta.idVenta,
+        codigoFactura: venta.codigoFactura,
+        fecha: new Date(venta.fechaVenta).toLocaleString(),
+        items: venta.detalles.reduce((s, d) => s + d.cantidad, 0),
+        total: venta.totalFinal,
+        cliente: venta.clienteNombre || 'Cliente anónimo'
+    });
+    guardarEstado();
+
+    await cargarProductosDesdeAPI();
+
+    form.reset();
+    _ventaIdEnProceso = null;
+}
+
+function setupFinalizarVentaModal() {
+    const modal = document.getElementById('modalFinalizarVenta');
+    const form = document.getElementById('formFinalizarVenta');
+    const btnCancelar = document.getElementById('btnCancelarFinalizar');
+    const cerrarBtn = document.getElementById('cerrarModalFinalizar');
+
+    if (cerrarBtn) cerrarBtn.addEventListener('click', () => hideModal(modal));
+    if (btnCancelar) btnCancelar.addEventListener('click', () => hideModal(modal));
+    if (form && !form._listenerAttached) {
+        form._listenerAttached = true;
+        form.addEventListener('submit', confirmarVenta);
+    }
+}
+
+/* ============================================================
+   12. HISTORIAL DE VENTAS
+   ============================================================ */
+
+let _historialCache = [];
+
+async function renderHistorial() {
+    const tbody = document.querySelector('#tablaHistorial tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:20px;color:#64748b;">Cargando...</td></tr>`;
+
+    const params = new URLSearchParams();
+    const desde = document.getElementById('histDesde')?.value;
+    const hasta = document.getElementById('histHasta')?.value;
+    const estadoSel = document.getElementById('histEstado')?.value;
+
+    if (desde) params.append('desde', desde);
+    if (hasta) params.append('hasta', hasta + 'T23:59:59');
+    if (estadoSel) params.append('estado', estadoSel);
+    params.append('pageSize', '100');
+
+    const resp = await api.get(`/Ventas?${params.toString()}`);
+    if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:20px;">Error al cargar ventas</td></tr>`;
+        return;
+    }
+
+    _historialCache = resp.data || [];
+
+    const buscar = (document.getElementById('histBuscar')?.value || '').toLowerCase().trim();
+    const filtradas = buscar
+        ? _historialCache.filter(v => (v.codigoFactura || '').toLowerCase().includes(buscar))
+        : _historialCache;
+
+    if (filtradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:20px;">No hay ventas registradas</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtradas.map(v => {
+        const fecha = formatearFechaColombia(v.fechaVenta);
+        const esAnulada = v.estado === 'Anulada';
+        const estadoColor = esAnulada ? '#dc2626' : '#16a34a';
+        const estadoBg = esAnulada ? 'rgba(220,38,38,0.15)' : 'rgba(22,163,74,0.15)';
+
+        return `
+            <tr data-id-venta="${v.idVenta}">
+                <td><strong>${escapeHtml(v.codigoFactura || '-')}</strong></td>
+                <td>${fecha}</td>
+                <td>${escapeHtml(v.clienteNombre || 'Anónimo')}</td>
+                <td>${escapeHtml(v.usuarioNombre || '-')}</td>
+                <td style="text-align:center;">${v.cantidadItems}</td>
+                <td style="text-align:right;">${formato(v.totalFinal)}</td>
+                <td>${escapeHtml(v.metodoPago)}</td>
+                <td>
+                    <span style="color:${estadoColor}; background:${estadoBg}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+                        ${escapeHtml(v.estado)}
+                    </span>
+                </td>
+                <td>
+                    <button class="btn small" data-accion="ver" data-id="${v.idVenta}">👁 Ver</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    setupTablaHistorialListener();
+}
+
+function setupTablaHistorialListener() {
+    const tbody = document.querySelector('#tablaHistorial tbody');
+    if (!tbody || tbody._listenerAttached) return;
+    tbody._listenerAttached = true;
+
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-accion="ver"]');
+        if (!btn) return;
+        const idVenta = parseInt(btn.dataset.id, 10);
+        verDetalleVenta(idVenta);
+    });
+}
+
+async function verDetalleVenta(idVenta) {
+    const modal = document.getElementById('modalDetalleVenta');
+    const cont = document.getElementById('detalleVentaContenido');
+    if (!modal || !cont) return;
+
+    cont.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">Cargando...</p>`;
+    showModal(modal);
+
+    const resp = await api.get(`/Ventas/${idVenta}`);
+    if (!resp.ok) {
+        cont.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar el detalle</p>`;
+        return;
+    }
+
+    const v = resp.data;
+    const fecha = formatearFechaColombia(v.fechaVenta);
+    const esAnulada = v.estado === 'Anulada';
+
+    const btnAnular = document.getElementById('btnAnularVenta');
+    if (btnAnular) {
+        btnAnular.style.display = esAnulada ? 'none' : 'inline-block';
+        btnAnular.dataset.id = v.idVenta;
+    }
+
+    cont.innerHTML = `
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div><strong>Factura:</strong> ${escapeHtml(v.codigoFactura || '-')}</div>
+            <div><strong>Fecha:</strong> ${fecha}</div>
+            <div><strong>Cliente:</strong> ${escapeHtml(v.clienteNombre || 'Anónimo')}</div>
+            <div><strong>Usuario:</strong> ${escapeHtml(v.usuarioNombre || '-')}</div>
+            <div><strong>Método:</strong> ${escapeHtml(v.metodoPago)}</div>
+            <div><strong>Estado:</strong> 
+                <span style="color:${esAnulada ? '#dc2626' : '#16a34a'}; font-weight:700;">
+                    ${escapeHtml(v.estado)}
+                </span>
+            </div>
+        </div>
+
+        <table class="tabla-carrito" style="margin-bottom:16px;">
+            <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th>SKU</th>
+                    <th style="text-align:center;">Cant.</th>
+                    <th style="text-align:right;">Precio</th>
+                    <th style="text-align:right;">Subtotal</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${(v.detalles || []).map(d => `
+                    <tr>
+                        <td>${escapeHtml(d.productoNombre || '-')}</td>
+                        <td>${escapeHtml(d.productoCodigo || '-')}</td>
+                        <td style="text-align:center;">${d.cantidad}</td>
+                        <td style="text-align:right;">${formato(d.precioUnitarioHistorico)}</td>
+                        <td style="text-align:right;">${formato(d.subtotalLinea)}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+
+        <div style="background:rgba(37,99,235,0.08); padding:12px; border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span>Subtotal:</span><strong>${formato(v.subtotal)}</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span>Impuestos:</span><strong>${formato(v.impuestosTotal)}</strong>
+            </div>
+            ${v.descuentoTotal > 0 ? `
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span>Descuento:</span><strong style="color:#dc2626;">-${formato(v.descuentoTotal)}</strong>
+                </div>
+            ` : ''}
+            <div style="display:flex; justify-content:space-between; border-top:1px solid #cbd5e1; padding-top:6px; margin-top:6px;">
+                <span style="font-size:16px;">TOTAL:</span>
+                <strong style="font-size:18px; color:#dc2626;">${formato(v.totalFinal)}</strong>
+            </div>
+        </div>
+
+        ${v.nota ? `<p style="margin-top:12px; font-style:italic; color:#64748b;">📝 ${escapeHtml(v.nota)}</p>` : ''}
+    `;
+}
+
+async function anularVenta(idVenta) {
+    if (!confirm('¿Estás seguro de que deseas anular esta venta? El stock se devolverá.')) return;
+
+    const motivo = prompt('Motivo de anulación (opcional):') || '';
+
+    const btnAnular = document.getElementById('btnAnularVenta');
+    btnAnular.disabled = true;
+    btnAnular.textContent = '⏳ Anulando...';
+
+    const resp = await api.put(`/Ventas/${idVenta}/anular`, { motivo });
+
+    btnAnular.disabled = false;
+    btnAnular.textContent = '🚫 Anular Venta';
+
+    if (!resp.ok) return;
+
+    toast('✅ Venta anulada correctamente');
+
+    hideModal(document.getElementById('modalDetalleVenta'));
+    renderHistorial();
+    await cargarProductosDesdeAPI();
+}
+
+function setupHistorialListeners() {
+    const btnFiltrar = document.getElementById('btnHistFiltrar');
+    const btnLimpiar = document.getElementById('btnHistLimpiar');
+    const btnCerrar = document.getElementById('cerrarModalDetalleVenta');
+    const btnCerrar2 = document.getElementById('btnCerrarDetalleVenta');
+    const btnAnular = document.getElementById('btnAnularVenta');
+
+    if (btnFiltrar && !btnFiltrar._listenerAttached) {
+        btnFiltrar._listenerAttached = true;
+        btnFiltrar.addEventListener('click', renderHistorial);
+    }
+
+    if (btnLimpiar && !btnLimpiar._listenerAttached) {
+        btnLimpiar._listenerAttached = true;
+        btnLimpiar.addEventListener('click', () => {
+            document.getElementById('histDesde').value = '';
+            document.getElementById('histHasta').value = '';
+            document.getElementById('histEstado').value = '';
+            document.getElementById('histBuscar').value = '';
+            renderHistorial();
+        });
+    }
+
+    if (btnCerrar && !btnCerrar._listenerAttached) {
+        btnCerrar._listenerAttached = true;
+        btnCerrar.addEventListener('click', () => hideModal(document.getElementById('modalDetalleVenta')));
+    }
+
+    if (btnCerrar2 && !btnCerrar2._listenerAttached) {
+        btnCerrar2._listenerAttached = true;
+        btnCerrar2.addEventListener('click', () => hideModal(document.getElementById('modalDetalleVenta')));
+    }
+
+    if (btnAnular && !btnAnular._listenerAttached) {
+        btnAnular._listenerAttached = true;
+        btnAnular.addEventListener('click', () => {
+            const id = parseInt(btnAnular.dataset.id, 10);
+            if (id) anularVenta(id);
+        });
+    }
+
+    const inputBuscar = document.getElementById('histBuscar');
+    if (inputBuscar && !inputBuscar._listenerAttached) {
+        inputBuscar._listenerAttached = true;
+        inputBuscar.addEventListener('input', () => renderHistorial());
+    }
+}
+
+/* ============================================================
+   13. CLIENTES (CRUD)
+   ============================================================ */
+
+let _clientesCache = [];
+let _editandoClienteId = null;
+
+async function initClientes() {
+    if (!localStorage.getItem('pos_token')) return;
+
+    const tbody = document.querySelector('#tablaClientes tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;padding:20px;">Cargando clientes...</td></tr>`;
+
+    const resp = await api.get('/Clientes?page=1&pageSize=200');
+    if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;">Error al cargar clientes</td></tr>`;
+        return;
+    }
+
+    _clientesCache = resp.data || [];
+    renderTablaClientes();
+    setupClientesListeners();
+}
+
+function renderTablaClientes() {
+    const tbody = document.querySelector('#tablaClientes tbody');
+    if (!tbody) return;
+
+    if (_clientesCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;padding:20px;">No hay clientes registrados</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = _clientesCache.map(c => `
+        <tr data-id="${c.idCliente}">
+            <td>${escapeHtml(c.nombre)}</td>
+            <td>${escapeHtml(c.correo || '-')}</td>
+            <td>${escapeHtml(c.telefono || '-')}</td>
+            <td>${escapeHtml(c.ciudad || '-')}</td>
+            <td>${escapeHtml(c.tipoCliente || 'Nuevo')}</td>
+            <td>
+                <button class="btn-accion editar" data-accion="editar" data-id="${c.idCliente}">
+                    ✏️ <span class="texto">Editar</span>
+                </button>
+                <button class="btn-accion eliminar" data-accion="eliminar" data-id="${c.idCliente}">
+                    🗑 <span class="texto">Eliminar</span>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+
+    const resumen = document.getElementById('resumenClientes');
+    if (resumen) {
+        const total = _clientesCache.length;
+        const frecuentes = _clientesCache.filter(c => c.tipoCliente === 'Frecuente').length;
+        const nuevos = _clientesCache.filter(c => c.tipoCliente === 'Nuevo').length;
+        const corporativos = _clientesCache.filter(c => c.tipoCliente === 'Corporativo').length;
+
+        resumen.innerHTML = `
+            <div class="card-resumen azul"><h4>Total Clientes</h4><p>${total}</p></div>
+            <div class="card-resumen celeste"><h4>Frecuentes</h4><p>${frecuentes}</p></div>
+            <div class="card-resumen verde"><h4>Nuevos</h4><p>${nuevos}</p></div>
+            <div class="card-resumen gris"><h4>Corporativos</h4><p>${corporativos}</p></div>
+        `;
+    }
+}
+
+function setupClientesListeners() {
+    const tbody = document.querySelector('#tablaClientes tbody');
+    const btnNuevo = document.getElementById('btnNuevoCliente');
+    const btnCancelar = document.getElementById('btnCancelarCliente');
+    const cerrar = document.getElementById('cerrarModalCliente');
+    const form = document.getElementById('formCliente');
+    const modal = document.getElementById('modalCliente');
+
+    if (tbody && !tbody._listenerAttached) {
+        tbody._listenerAttached = true;
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-accion]');
+            if (!btn) return;
+
+            const id = parseInt(btn.dataset.id, 10);
+            if (btn.dataset.accion === 'editar') abrirModalCliente(id);
+            if (btn.dataset.accion === 'eliminar') eliminarCliente(id);
+        });
+    }
+
+    if (btnNuevo && !btnNuevo._listenerAttached) {
+        btnNuevo._listenerAttached = true;
+        btnNuevo.addEventListener('click', () => abrirModalCliente(null));
+    }
+
+    if (cerrar && !cerrar._listenerAttached) {
+        cerrar._listenerAttached = true;
+        cerrar.addEventListener('click', () => hideModal(modal));
+    }
+    if (btnCancelar && !btnCancelar._listenerAttached) {
+        btnCancelar._listenerAttached = true;
+        btnCancelar.addEventListener('click', () => hideModal(modal));
+    }
+
+    if (form && !form._listenerAttached) {
+        form._listenerAttached = true;
+        form.addEventListener('submit', guardarCliente);
+    }
+}
+
+function abrirModalCliente(idCliente) {
+    const modal = document.getElementById('modalCliente');
+    const titulo = document.getElementById('tituloModalCliente');
+    const form = document.getElementById('formCliente');
+
+    form.reset();
+    _editandoClienteId = idCliente;
+
+    if (idCliente == null) {
+        titulo.textContent = 'Nuevo Cliente';
+        document.getElementById('cliTipo').value = 'Nuevo';
+    } else {
+        titulo.textContent = 'Editar Cliente';
+        const c = _clientesCache.find(x => x.idCliente === idCliente);
+        if (c) {
+            document.getElementById('cliDocumento').value = c.documento || '';
+            document.getElementById('cliNombre').value = c.nombre || '';
+            document.getElementById('cliCorreo').value = c.correo || '';
+            document.getElementById('cliTelefono').value = c.telefono || '';
+            document.getElementById('cliCiudad').value = c.ciudad || '';
+            document.getElementById('cliDireccion').value = c.direccion || '';
+            document.getElementById('cliTipo').value = c.tipoCliente || 'Nuevo';
+        }
+    }
+
+    showModal(modal);
+}
+
+async function guardarCliente(e) {
+    e.preventDefault();
+
+    const esEdicion = _editandoClienteId != null;
+
+    const dto = {
+        documento: document.getElementById('cliDocumento').value.trim() || null,
+        nombre: document.getElementById('cliNombre').value.trim(),
+        correo: document.getElementById('cliCorreo').value.trim() || null,
+        telefono: document.getElementById('cliTelefono').value.trim() || null,
+        ciudad: document.getElementById('cliCiudad').value.trim() || null,
+        direccion: document.getElementById('cliDireccion').value.trim() || null,
+        tipoCliente: document.getElementById('cliTipo').value
+    };
+
+    if (!dto.nombre) {
+        toast('El nombre es obligatorio', 'error');
+        return;
+    }
+
+    const btnGuardar = document.getElementById('btnGuardarCliente');
+    const textoOriginal = btnGuardar.textContent;
+    btnGuardar.disabled = true;
+    btnGuardar.textContent = '⏳ Guardando...';
+
+    let resp;
+    if (esEdicion) {
+        resp = await api.put(`/Clientes/${_editandoClienteId}`, dto);
+    } else {
+        resp = await api.post('/Clientes', dto);
+    }
+
+    btnGuardar.disabled = false;
+    btnGuardar.textContent = textoOriginal;
+
+    if (!resp.ok) return;
+
+    toast(esEdicion ? '✅ Cliente actualizado' : '✅ Cliente creado');
+    hideModal(document.getElementById('modalCliente'));
+    await initClientes();
+}
+
+async function eliminarCliente(idCliente) {
+    const c = _clientesCache.find(x => x.idCliente === idCliente);
+    if (!c) return;
+
+    const msg = `¿Eliminar el cliente "${c.nombre}"?\n\n` +
+                `Documento: ${c.documento || 'N/A'}\n` +
+                `Esta acción no se puede deshacer.`;
+
+    if (!confirm(msg)) return;
+
+    const resp = await api.delete(`/Clientes/${idCliente}`);
+    if (!resp.ok) return;
+
+    toast('✅ Cliente eliminado');
+    await initClientes();
+}
+
+/* ============================================================
+   14. CATEGORÍAS (CRUD)
+   ============================================================ */
+
+let _categoriasCache = [];
+let _editandoCategoriaId = null;
+
+async function initCategorias() {
+    if (!localStorage.getItem('pos_token')) return;
+
+    const tbody = document.querySelector('#tablaCategorias tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">Cargando...</td></tr>`;
+
+    const resp = await api.get('/Categorias');
+    if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#dc2626;">Error al cargar categorías</td></tr>`;
+        return;
+    }
+
+    _categoriasCache = resp.data || [];
+    renderTablaCategorias();
+    setupCategoriasListeners();
+}
+
+function renderTablaCategorias() {
+    const tbody = document.querySelector('#tablaCategorias tbody');
+    if (!tbody) return;
+
+    if (_categoriasCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">No hay categorías</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = _categoriasCache.map(c => {
+        const cantidadProductos = (window._productosCache || []).filter(p => p.idCategoria === c.idCategoria).length;
+
+        return `
+            <tr data-id="${c.idCategoria}">
+                <td>${c.idCategoria}</td>
+                <td><strong>${escapeHtml(c.nombre)}</strong></td>
+                <td>${escapeHtml(c.descripcion || '-')}</td>
+                <td style="text-align:center;">${cantidadProductos}</td>
+                <td>
+                    <div class="acciones">
+                        <button class="btn-accion editar" data-accion="editar" data-id="${c.idCategoria}">
+                            ✏️ <span class="texto">Editar</span>
+                        </button>
+                        <button class="btn-accion eliminar" data-accion="eliminar" data-id="${c.idCategoria}">
+                            🗑 <span class="texto">Eliminar</span>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // 🆕 Refrescar el buscador
+    const inputCat = document.getElementById('buscarCategoria');
+    if (inputCat && inputCat._buscadorAPI) {
+        inputCat._buscadorAPI.refresh();
+    }
+}
+
+function setupCategoriasListeners() {
+    const tbody = document.querySelector('#tablaCategorias tbody');
+    const btnNueva = document.getElementById('btnNuevaCategoria');
+    const cerrar = document.getElementById('cerrarModalCategoria');
+    const btnCancelar = document.getElementById('btnCancelarCategoria');
+    const form = document.getElementById('formCategoria');
+    const modal = document.getElementById('modalCategoria');
+
+    if (tbody && !tbody._listenerAttached) {
+        tbody._listenerAttached = true;
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-accion]');
+            if (!btn) return;
+            const id = parseInt(btn.dataset.id, 10);
+            if (btn.dataset.accion === 'editar') abrirModalCategoria(id);
+            if (btn.dataset.accion === 'eliminar') eliminarCategoria(id);
+        });
+    }
+
+    if (btnNueva && !btnNueva._listenerAttached) {
+        btnNueva._listenerAttached = true;
+        btnNueva.addEventListener('click', () => abrirModalCategoria(null));
+    }
+
+    if (cerrar && !cerrar._listenerAttached) {
+        cerrar._listenerAttached = true;
+        cerrar.addEventListener('click', () => hideModal(modal));
+    }
+    if (btnCancelar && !btnCancelar._listenerAttached) {
+        btnCancelar._listenerAttached = true;
+        btnCancelar.addEventListener('click', () => hideModal(modal));
+    }
+
+    if (form && !form._listenerAttached) {
+        form._listenerAttached = true;
+        form.addEventListener('submit', guardarCategoria);
+    }
+}
+
+function abrirModalCategoria(idCategoria) {
+    const modal = document.getElementById('modalCategoria');
+    const titulo = document.getElementById('tituloModalCategoria');
+    const form = document.getElementById('formCategoria');
+
+    form.reset();
+    _editandoCategoriaId = idCategoria;
+
+    if (idCategoria == null) {
+        titulo.textContent = 'Nueva Categoría';
+    } else {
+        titulo.textContent = 'Editar Categoría';
+        const c = _categoriasCache.find(x => x.idCategoria === idCategoria);
+        if (c) {
+            document.getElementById('catNombre').value = c.nombre || '';
+            document.getElementById('catDescripcion').value = c.descripcion || '';
+        }
+    }
+
+    showModal(modal);
+}
+
+async function guardarCategoria(e) {
+    e.preventDefault();
+
+    const esEdicion = _editandoCategoriaId != null;
+    const nombre = document.getElementById('catNombre').value.trim();
+    const descripcion = document.getElementById('catDescripcion').value.trim();
+
+    if (!nombre) {
+        toast('El nombre es obligatorio', 'error');
+        return;
+    }
+
+    const dto = {
+        nombre: nombre,
+        descripcion: descripcion || null
+    };
+
+    const btnGuardar = document.getElementById('btnGuardarCategoria');
+    const textoOriginal = btnGuardar.textContent;
+    btnGuardar.disabled = true;
+    btnGuardar.textContent = '⏳ Guardando...';
+
+    let resp;
+    if (esEdicion) {
+        resp = await api.put(`/Categorias/${_editandoCategoriaId}`, dto);
+    } else {
+        resp = await api.post('/Categorias', dto);
+    }
+
+    btnGuardar.disabled = false;
+    btnGuardar.textContent = textoOriginal;
+
+    if (!resp.ok) return;
+
+    toast(esEdicion ? '✅ Categoría actualizada' : '✅ Categoría creada');
+    hideModal(document.getElementById('modalCategoria'));
+
+    await initCategorias();
+
+    const selectProdCat = document.getElementById('prodCategoria');
+    if (selectProdCat) {
+        selectProdCat.dataset.loaded = 'false';
+    }
+}
+
+async function eliminarCategoria(idCategoria) {
+    const c = _categoriasCache.find(x => x.idCategoria === idCategoria);
+    if (!c) return;
+
+    if (!confirm(`¿Eliminar la categoría "${c.nombre}"?`)) return;
+
+    const resp = await api.delete(`/Categorias/${idCategoria}`);
+
+    if (!resp.ok) {
+        if (resp.status === 409) {
+            toast(resp.data?.message || 'No se puede eliminar: tiene productos asociados.', 'error');
+        }
+        return;
+    }
+
+    toast('✅ Categoría eliminada');
+    await initCategorias();
+    await cargarProductosDesdeAPI();
+
+    const selectProdCat = document.getElementById('prodCategoria');
+    if (selectProdCat) {
+        selectProdCat.dataset.loaded = 'false';
+    }
+}
+
+/* ============================================================
+   15. INVENTARIO (CRUD)
+   ============================================================ */
+
+let _productosCache = [];
+let _editandoProductoId = null;
+
+async function initInventario() {
+    if (!localStorage.getItem('pos_token')) return;
+
+    const tbody = document.querySelector('#tablaProductos tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;padding:20px;">Cargando productos...</td></tr>`;
+
+    const resp = await api.get('/Productos?page=1&pageSize=200');
+    if (!resp.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#dc2626;">Error al cargar productos</td></tr>`;
+        return;
+    }
+
+    _productosCache = resp.data || [];
+    renderTablaInventario();
+    renderResumenInventario();
+    setupInventarioListeners();
+
+    setTimeout(() => {
+        if (typeof BuscadorUI !== 'undefined') BuscadorUI.init();
+    }, 100);
+}
+
+function renderTablaInventario() {
+    const tbody = document.querySelector('#tablaProductos tbody');
+    if (!tbody) return;
+
+    if (_productosCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#64748b;">No hay productos</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = _productosCache.map(p => {
+        let stockClass = 'high-stock';
+        if (p.stockActual < 10) stockClass = 'low-stock';
+        else if (p.stockActual < 50) stockClass = 'medium-stock';
+
+        return `
+            <tr class="${stockClass}" data-id="${p.idProducto}">
+                <td>${escapeHtml(p.codigoInterno)}</td>
+                <td>${escapeHtml(p.nombre)}</td>
+                <td>${escapeHtml(p.categoriaNombre || '-')}</td>
+                <td style="text-align:right;">${formato(p.precioVenta)}</td>
+                <td style="text-align:center;">${p.stockActual}</td>
+                <td>
+                    <button class="btn-accion editar" data-accion="editar" data-id="${p.idProducto}">
+                        ✏️ <span class="texto">Editar</span>
+                    </button>
+                    <button class="btn-accion eliminar" data-accion="eliminar" data-id="${p.idProducto}">
+                        🗑 <span class="texto">Eliminar</span>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderResumenInventario() {
+    const div = document.getElementById('resumenInventario');
+    if (!div) return;
+
+    const total = _productosCache.length;
+    const valor = _productosCache.reduce((s, p) => s + (p.precioVenta * p.stockActual), 0);
+    const bajoStock = _productosCache.filter(p => p.stockActual < 10).length;
+    const sinStock = _productosCache.filter(p => p.stockActual === 0).length;
+
+    div.innerHTML = `
+        <div class="card-resumen azul"><h4>Total Productos</h4><p>${total}</p></div>
+        <div class="card-resumen verde"><h4>Valor Inventario</h4><p>${formato(valor)}</p></div>
+        <div class="card-resumen celeste"><h4>Bajo Stock</h4><p>${bajoStock}</p></div>
+        <div class="card-resumen gris"><h4>Sin Stock</h4><p>${sinStock}</p></div>
+    `;
+}
+
+function setupInventarioListeners() {
+    const tbody = document.querySelector('#tablaProductos tbody');
+    const btnNuevo = document.getElementById('btnNuevoProducto');
+    const modal = document.getElementById('modalProducto');
+    const form = document.getElementById('formProducto');
+    const cerrar = document.getElementById('cerrarModalProducto');
+    const btnCancelar = document.getElementById('btnCancelarProducto');
+
+    if (tbody && !tbody._listenerAttached) {
+        tbody._listenerAttached = true;
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-accion]');
+            if (!btn) return;
+            const id = parseInt(btn.dataset.id, 10);
+
+            if (btn.dataset.accion === 'editar') abrirModalProducto(id);
+            if (btn.dataset.accion === 'eliminar') eliminarProductoDelInventario(id);
+        });
+    }
+
+    if (btnNuevo && !btnNuevo._listenerAttached) {
+        btnNuevo._listenerAttached = true;
+        btnNuevo.addEventListener('click', () => abrirModalProducto(null));
+    }
+
+    if (cerrar && !cerrar._listenerAttached) {
+        cerrar._listenerAttached = true;
+        cerrar.addEventListener('click', () => hideModal(modal));
+    }
+    if (btnCancelar && !btnCancelar._listenerAttached) {
+        btnCancelar._listenerAttached = true;
+        btnCancelar.addEventListener('click', () => hideModal(modal));
+    }
+
+    if (form && !form._listenerAttached) {
+        form._listenerAttached = true;
+        form.addEventListener('submit', guardarProducto);
+    }
+}
+
+async function cargarCategoriasEnModal() {
+    const select = document.getElementById('prodCategoria');
+    if (!select) return;
+
+    const resp = await api.get('/Categorias');
+    if (!resp.ok) return;
+
+    const categorias = resp.data || [];
+
+    select.innerHTML = '<option value="">— Sin categoría —</option>' +
+        categorias.map(c =>
+            `<option value="${c.idCategoria}">${escapeHtml(c.nombre)}</option>`
+        ).join('');
+}
+
+async function abrirModalProducto(idProducto) {
+    await cargarCategoriasEnModal();
+
+    const modal = document.getElementById('modalProducto');
+    const titulo = document.getElementById('tituloModalProducto');
+    const form = document.getElementById('formProducto');
+
+    form.reset();
+    _editandoProductoId = idProducto;
+
+    if (idProducto == null) {
+        titulo.textContent = 'Nuevo Producto';
+        document.getElementById('prodCategoria').value = '';
+    } else {
+        titulo.textContent = 'Editar Producto';
+        const p = _productosCache.find(x => x.idProducto === idProducto);
+        if (p) {
+            document.getElementById('prodCodigo').value = p.codigoInterno || '';
+            document.getElementById('prodNombre').value = p.nombre || '';
+            document.getElementById('prodPrecio').value = p.precioVenta || 0;
+            document.getElementById('prodStock').value = p.stockActual || 0;
+            document.getElementById('prodCategoria').value = p.idCategoria || '';
+        }
+    }
+
+    showModal(modal);
+}
+
+async function guardarProducto(e) {
+    e.preventDefault();
+
+    const esEdicion = _editandoProductoId != null;
+    const categoriaRaw = document.getElementById('prodCategoria').value;
+    const idCategoria = categoriaRaw ? parseInt(categoriaRaw, 10) : null;
+
+    const dto = {
+        codigoInterno: document.getElementById('prodCodigo').value.trim(),
+        nombre: document.getElementById('prodNombre').value.trim(),
+        idCategoria: idCategoria,
+        actualizarCategoria: true,
+        precioVenta: parseFloat(document.getElementById('prodPrecio').value) || 0,
+        stockActual: parseInt(document.getElementById('prodStock').value, 10) || 0
+    };
+
+    if (!dto.codigoInterno || !dto.nombre) {
+        toast('Código y nombre son obligatorios', 'error');
+        return;
+    }
+
+    let resp;
+    if (esEdicion) {
+        resp = await api.put(`/Productos/${_editandoProductoId}`, dto);
+    } else {
+        resp = await api.post('/Productos', {
+            ...dto,
+            stockMinimo: 5,
+            impuestoPorcentaje: 19,
+            estado: 'Activo'
+        });
+    }
+
+    if (!resp.ok) return;
+
+    toast(esEdicion ? '✅ Producto actualizado' : '✅ Producto creado');
+    hideModal(document.getElementById('modalProducto'));
+    await initInventario();
+    await cargarProductosDesdeAPI();
+}
+
+async function eliminarProductoDelInventario(idProducto) {
+    if (!confirm('¿Eliminar este producto?')) return;
+
+    const resp = await api.delete(`/Productos/${idProducto}`);
+    if (!resp.ok) return;
+
+    toast('✅ Producto eliminado');
+    await initInventario();
+    await cargarProductosDesdeAPI();
+}
+
+/* ============================================================
+   16. USUARIOS (CRUD)
+   ============================================================ */
+
+let _usuariosCache = [];
+let _rolesCache = [];
+let _editandoUsuarioId = null;
+
+async function initUsuarios() {
+    if (!localStorage.getItem('pos_token')) return;
+
+    const usuario = JSON.parse(localStorage.getItem('pos_usuario') || '{}');
+    if (usuario.rol !== 1) {
+        toast('Solo administradores pueden ver esta sección', 'error');
+        return;
+    }
+
+    const tbody = document.querySelector('#tablaUsuarios tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#64748b; padding:20px;">Cargando usuarios...</td></tr>`;
+
+    const [respUsuarios, respRoles] = await Promise.all([
+        api.get('/Usuarios'),
+        api.get('/Roles')
+    ]);
+
+    if (!respUsuarios.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#dc2626;">Error al cargar usuarios</td></tr>`;
+        return;
+    }
+
+    _usuariosCache = respUsuarios.data || [];
+    _rolesCache = respRoles.ok ? (respRoles.data || []) : [];
+
+    renderTablaUsuarios();
+    renderResumenUsuarios();
+    setupUsuariosListeners();
+}
+
+function renderTablaUsuarios() {
+    const tbody = document.querySelector('#tablaUsuarios tbody');
+    if (!tbody) return;
+
+    if (_usuariosCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#64748b; padding:20px;">No hay usuarios</td></tr>`;
+        return;
+    }
+
+    const usuarioLogueado = JSON.parse(localStorage.getItem('pos_usuario') || '{}');
+
+    tbody.innerHTML = _usuariosCache.map(u => {
+        const esUnoMismo = u.idUsuario === usuarioLogueado.id;
+        const estadoColor = u.estado === 'Activo' ? '#16a34a' : '#dc2626';
+        const estadoBg = u.estado === 'Activo' ? 'rgba(22,163,74,0.15)' : 'rgba(220,38,38,0.15)';
+        const fecha = formatearFechaColombia(u.fechaCreacion);
+
+        return `
+            <tr data-id="${u.idUsuario}">
+                <td><strong>${escapeHtml(u.nombre)}</strong>${esUnoMismo ? ' <span style="color:#2563eb; font-size:11px;">(tú)</span>' : ''}</td>
+                <td>${escapeHtml(u.correo)}</td>
+                <td>${escapeHtml(u.rol || '-')}</td>
+                <td style="text-align:center;">
+                    <span style="color:${estadoColor}; background:${estadoBg}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
+                        ${escapeHtml(u.estado)}
+                    </span>
+                </td>
+                <td style="font-size:12px; color:#64748b;">${fecha}</td>
+                <td>
+                    <button class="btn-accion editar" data-accion="editar" data-id="${u.idUsuario}">
+                        ✏️ <span class="texto">Editar</span>
+                    </button>
+                    <button class="btn-accion eliminar" data-accion="eliminar" data-id="${u.idUsuario}" ${esUnoMismo ? 'disabled title="No puedes eliminarte a ti mismo"' : ''}>
+                        🗑 <span class="texto">Eliminar</span>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderResumenUsuarios() {
+    const div = document.getElementById('resumenUsuarios');
+    if (!div) return;
+
+    const total = _usuariosCache.length;
+    const activos = _usuariosCache.filter(u => u.estado === 'Activo').length;
+    const inactivos = _usuariosCache.filter(u => u.estado === 'Inactivo').length;
+    const admins = _usuariosCache.filter(u => u.idRol === 1).length;
+
+    div.innerHTML = `
+        <div class="card-resumen azul"><h4>Total Usuarios</h4><p>${total}</p></div>
+        <div class="card-resumen verde"><h4>Activos</h4><p>${activos}</p></div>
+        <div class="card-resumen celeste"><h4>Administradores</h4><p>${admins}</p></div>
+        <div class="card-resumen gris"><h4>Inactivos</h4><p>${inactivos}</p></div>
+    `;
+}
+
+function setupUsuariosListeners() {
+    const tbody = document.querySelector('#tablaUsuarios tbody');
+    const btnNuevo = document.getElementById('btnNuevoUsuario');
+    const modal = document.getElementById('modalUsuario');
+    const form = document.getElementById('formUsuario');
+    const cerrar = document.getElementById('cerrarModalUsuario');
+    const btnCancelar = document.getElementById('btnCancelarUsuario');
+
+    if (tbody && !tbody._listenerAttached) {
+        tbody._listenerAttached = true;
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-accion]');
+            if (!btn || btn.disabled) return;
+
+            const id = parseInt(btn.dataset.id, 10);
+            if (btn.dataset.accion === 'editar') abrirModalUsuario(id);
+            if (btn.dataset.accion === 'eliminar') eliminarUsuario(id);
+        });
+    }
+
+    if (btnNuevo && !btnNuevo._listenerAttached) {
+        btnNuevo._listenerAttached = true;
+        btnNuevo.addEventListener('click', () => abrirModalUsuario(null));
+    }
+
+    if (cerrar && !cerrar._listenerAttached) {
+        cerrar._listenerAttached = true;
+        cerrar.addEventListener('click', () => hideModal(modal));
+    }
+    if (btnCancelar && !btnCancelar._listenerAttached) {
+        btnCancelar._listenerAttached = true;
+        btnCancelar.addEventListener('click', () => hideModal(modal));
+    }
+
+    if (form && !form._listenerAttached) {
+        form._listenerAttached = true;
+        form.addEventListener('submit', guardarUsuario);
+    }
+
+    // Toggle password
+    function setupTogglePassword(btnId, inputId) {
+        const btn = document.getElementById(btnId);
+        const input = document.getElementById(inputId);
+        if (btn && !btn._attached) {
+            btn._attached = true;
+            btn.addEventListener('click', () => {
+                const esPassword = input.type === 'password';
+                input.type = esPassword ? 'text' : 'password';
+                btn.textContent = esPassword ? '🙈' : '👁';
+            });
+        }
+    }
+    setupTogglePassword('togglePassword', 'usuPassword');
+    setupTogglePassword('togglePassword2', 'usuPassword2');
+
+    if (modal && !modal._backdropAttached) {
+        modal._backdropAttached = true;
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) hideModal(modal);
+        });
+    }
+}
+
+function abrirModalUsuario(idUsuario) {
+    const modal = document.getElementById('modalUsuario');
+    const titulo = document.getElementById('tituloModalUsuario');
+    const form = document.getElementById('formUsuario');
+    const helpPass = document.getElementById('usuPasswordHelp');
+
+    const inputPass = document.getElementById('usuPassword');
+    const inputPass2 = document.getElementById('usuPassword2');
+    const inputCorreo = document.getElementById('usuCorreo');
+    const feedbackCorreo = document.getElementById('usuCorreoFeedback');
+    const feedback2 = document.getElementById('usuPassword2Feedback');
+    const password2Row = document.getElementById('usuPassword2Row');
+
+    form.reset();
+    _editandoUsuarioId = idUsuario;
+
+    const selectRol = document.getElementById('usuRol');
+    selectRol.innerHTML = '<option value="">— Selecciona un rol —</option>' +
+        _rolesCache.map(r => `<option value="${r.idRol}">${escapeHtml(r.nombreRol)}</option>`).join('');
+
+    if (feedbackCorreo) feedbackCorreo.style.display = 'none';
+    if (feedback2) feedback2.style.display = 'none';
+    if (inputCorreo) inputCorreo.style.borderColor = '';
+    if (inputPass2) inputPass2.style.borderColor = '';
+
+    if (idUsuario == null) {
+        titulo.textContent = 'Nuevo Usuario';
+        inputPass.required = true;
+        inputPass2.required = true;
+        document.getElementById('usuEstado').value = 'Activo';
+        helpPass.style.display = 'none';
+        password2Row.style.display = '';
+    } else {
+        titulo.textContent = 'Editar Usuario';
+        inputPass.required = false;
+        inputPass2.required = false;
+        helpPass.style.display = 'block';
+        password2Row.style.display = 'none';
+
+        const u = _usuariosCache.find(x => x.idUsuario === idUsuario);
+        if (u) {
+            document.getElementById('usuNombre').value = u.nombre || '';
+            document.getElementById('usuCorreo').value = u.correo || '';
+            document.getElementById('usuRol').value = u.idRol || '';
+            document.getElementById('usuEstado').value = u.estado || 'Activo';
+        }
+    }
+
+    if (inputPass && !inputPass._mostrarConfirmarAttached) {
+        inputPass._mostrarConfirmarAttached = true;
+        inputPass.addEventListener('input', () => {
+            if (_editandoUsuarioId != null) {
+                password2Row.style.display = inputPass.value ? '' : 'none';
+                if (!inputPass.value && feedback2) {
+                    feedback2.style.display = 'none';
+                    inputPass2.style.borderColor = '';
+                }
+            }
+        });
+    }
+
+    if (inputCorreo && !inputCorreo._validacionAttached) {
+        inputCorreo._validacionAttached = true;
+        inputCorreo.addEventListener('input', () => {
+            const valor = inputCorreo.value.trim();
+            if (!valor) {
+                feedbackCorreo.style.display = 'none';
+                inputCorreo.style.borderColor = '';
+                return;
+            }
+
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            const valido = emailRegex.test(valor);
+
+            feedbackCorreo.style.display = 'block';
+            if (valido) {
+                feedbackCorreo.textContent = '✅ Correo válido';
+                feedbackCorreo.style.color = '#16a34a';
+                inputCorreo.style.borderColor = '#16a34a';
+            } else {
+                feedbackCorreo.textContent = '⚠️ Formato de correo inválido';
+                feedbackCorreo.style.color = '#dc2626';
+                inputCorreo.style.borderColor = '#dc2626';
+            }
+        });
+    }
+
+    function validarCoincidenciaPasswords() {
+        const p1 = inputPass?.value || '';
+        const p2 = inputPass2?.value || '';
+
+        if (!p2) {
+            feedback2.style.display = 'none';
+            inputPass2.style.borderColor = '';
+            return;
+        }
+
+        if (p1 === p2) {
+            feedback2.style.display = 'block';
+            feedback2.textContent = '✅ Las contraseñas coinciden';
+            feedback2.style.color = '#16a34a';
+            inputPass2.style.borderColor = '#16a34a';
+        } else {
+            feedback2.style.display = 'block';
+            feedback2.textContent = '⚠️ Las contraseñas no coinciden';
+            feedback2.style.color = '#dc2626';
+            inputPass2.style.borderColor = '#dc2626';
+        }
+    }
+
+    if (inputPass && !inputPass._coincidenciaAttached) {
+        inputPass._coincidenciaAttached = true;
+        inputPass.addEventListener('input', validarCoincidenciaPasswords);
+    }
+
+    if (inputPass2 && !inputPass2._coincidenciaAttached) {
+        inputPass2._coincidenciaAttached = true;
+        inputPass2.addEventListener('input', validarCoincidenciaPasswords);
+    }
+
+    showModal(modal);
+}
+
+async function guardarUsuario(e) {
+    e.preventDefault();
+
+    const esEdicion = _editandoUsuarioId != null;
+
+    const nombre = document.getElementById('usuNombre').value.trim();
+    const correo = document.getElementById('usuCorreo').value.trim();
+    const password = document.getElementById('usuPassword').value.trim();
+    const idRol = parseInt(document.getElementById('usuRol').value, 10);
+    const estado = document.getElementById('usuEstado').value;
+
+    if (!nombre) { toast('El nombre es obligatorio', 'error'); return; }
+    if (!correo) { toast('El correo es obligatorio', 'error'); return; }
+    if (!idRol) { toast('Selecciona un rol', 'error'); return; }
+
+    const password2 = document.getElementById('usuPassword2')?.value || '';
+
+    if (!esEdicion) {
+        if (password !== password2) {
+            toast('Las contraseñas no coinciden', 'error');
+            document.getElementById('usuPassword2').focus();
+            return;
+        }
+    } else {
+        if (password && password !== password2) {
+            toast('Las contraseñas no coinciden', 'error');
+            document.getElementById('usuPassword2').focus();
+            return;
+        }
+    }
+
+    const dto = { nombre, correo, idRol, estado };
+    if (password) dto.password = password;
+
+    if (window._guardandoUsuario) return;
+    window._guardandoUsuario = true;
+
+    const btnGuardar = document.getElementById('btnGuardarUsuario');
+    const textoOriginal = btnGuardar.textContent;
+    btnGuardar.disabled = true;
+    btnGuardar.textContent = '⏳ Guardando...';
+
+    let resp;
+    if (esEdicion) {
+        resp = await api.put(`/Usuarios/${_editandoUsuarioId}`, dto);
+    } else {
+        resp = await api.post('/Usuarios', dto);
+    }
+
+    btnGuardar.disabled = false;
+    btnGuardar.textContent = textoOriginal;
+    window._guardandoUsuario = false;
+
+    if (!resp.ok) return;
+
+    toast(esEdicion ? '✅ Usuario actualizado' : '✅ Usuario creado');
+    hideModal(document.getElementById('modalUsuario'));
+    await initUsuarios();
+}
+
+async function eliminarUsuario(idUsuario) {
+    const u = _usuariosCache.find(x => x.idUsuario === idUsuario);
+    if (!u) return;
+
+    const usuarioLogueado = JSON.parse(localStorage.getItem('pos_usuario') || '{}');
+    if (u.idUsuario === usuarioLogueado.id) {
+        toast('No puedes eliminar tu propio usuario', 'error');
+        return;
+    }
+
+    const msg = `¿Eliminar el usuario "${u.nombre}"?\n\n` +
+                `Correo: ${u.correo}\n` +
+                `Rol: ${u.rol}\n\n` +
+                `Esta acción no se puede deshacer.`;
+
+    if (!confirm(msg)) return;
+
+    const resp = await api.delete(`/Usuarios/${idUsuario}`);
+    if (!resp.ok) return;
+
+    toast('✅ Usuario eliminado');
+    await initUsuarios();
+}
+
+/* ============================================================
+   17. DASHBOARD / REPORTES
+   ============================================================ */
+
+let _graficoVentasSemana = null;
+let _graficoMetodosPago = null;
+let _periodoActual = 'mes';
+
+async function initReportes() {
+    if (!localStorage.getItem('pos_token')) return;
+
+    setupFiltrosDashboard();
+    await cargarDatosDashboard(_periodoActual);
+}
+
+function setupFiltrosDashboard() {
+    const botones = document.querySelectorAll('.btn-periodo');
+    if (botones.length === 0) return;
+    if (botones[0]._listenerAttached) return;
+
+    botones.forEach(btn => {
+        btn._listenerAttached = true;
+        btn.addEventListener('click', async () => {
+            const periodo = btn.dataset.periodo;
+            if (!periodo) return;
+
+            botones.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            _periodoActual = periodo;
+            await cargarDatosDashboard(periodo);
+        });
+    });
+}
+
+async function cargarDatosDashboard(periodo) {
+    // Actualizar texto indicador
+    const textoPeriodo = document.getElementById('dashPeriodoTexto');
+    const etiquetas = {
+        hoy: 'Mostrando datos de hoy',
+        semana: 'Mostrando datos de los últimos 7 días',
+        mes: 'Mostrando datos del mes actual',
+        'año': 'Mostrando datos del año actual',
+        anio: 'Mostrando datos del año actual'
+    };
+    if (textoPeriodo) {
+        textoPeriodo.textContent = etiquetas[periodo] || 'Mostrando datos';
+    }
+
+    // 🆕 Actualizar los TÍTULOS de las tarjetas según el período
+    actualizarTitulosTarjetas(periodo);
+
+    // Mostrar indicador de carga
+    document.querySelectorAll('#resumenReportes .card-resumen p').forEach(p => {
+        p.style.opacity = '0.5';
+    });
+
+    // Llamar a la API
+    const resp = await api.get(`/Reportes/dashboard?periodo=${periodo}`);
+    if (!resp.ok) {
+        toast('Error al cargar el dashboard', 'error');
+        return;
+    }
+
+    const data = resp.data;
+    console.log(`📊 Dashboard (${periodo}):`, data);
+
+    // Actualizar UI
+    actualizarTarjetasDashboard(data);
+    renderizarGraficoVentasSemana(data.ventasPorDia, periodo);
+    renderizarGraficoMetodosPago(data.ventasPorMetodo);
+    renderizarTopProductos(data.topProductos);
+    renderizarUltimasVentas(data.ultimasVentas);
+
+    // Restaurar opacidad
+    document.querySelectorAll('#resumenReportes .card-resumen p').forEach(p => {
+        p.style.opacity = '1';
+    });
+}
+
+// ============================================================
+// Actualizar los títulos de las tarjetas según el período
+// ============================================================
+function actualizarTitulosTarjetas(periodo) {
+    // Mapeo de período → sufijo del título
+    const sufijos = {
+        hoy: 'de Hoy',
+        semana: 'de la Semana',
+        mes: 'del Mes',
+        'año': 'del Año',
+        anio: 'del Año'
+    };
+
+    const sufijo = sufijos[periodo] || 'del Mes';
+
+    // Actualizar cada título
+    const ingresosTitulo = document.getElementById('dashIngresosTitulo');
+    const ventasTitulo = document.getElementById('dashVentasTitulo');
+    const ticketTitulo = document.getElementById('dashTicketTitulo');
+    const productosTitulo = document.getElementById('dashProductosTitulo');
+
+    if (ingresosTitulo) ingresosTitulo.textContent = `Ingresos ${sufijo}`;
+    if (ventasTitulo) ventasTitulo.textContent = `Ventas ${sufijo}`;
+
+    // Para ticket promedio y productos vendidos, usar paréntesis
+    // "Ticket Promedio (Hoy)" en lugar de "Ticket Promedio de Hoy"
+    const parentesis = {
+        hoy: '(Hoy)',
+        semana: '(Semana)',
+        mes: '(Mes)',
+        'año': '(Año)',
+        anio: '(Año)'
+    };
+
+    const etiquetaParentesis = parentesis[periodo] || '(Mes)';
+
+    if (ticketTitulo) ticketTitulo.textContent = `Ticket Promedio ${etiquetaParentesis}`;
+    if (productosTitulo) productosTitulo.textContent = `Productos Vendidos ${etiquetaParentesis}`;
+}
+
+function actualizarTarjetasDashboard(data) {
+    const ingresos = document.getElementById('dashIngresos');
+    const ventas = document.getElementById('dashVentas');
+    const ticket = document.getElementById('dashTicket');
+    const productos = document.getElementById('dashProductos');
+
+    if (ingresos) ingresos.textContent = formato(data.ingresosMes);
+    if (ventas) ventas.textContent = data.cantidadVentasMes;
+    if (ticket) ticket.textContent = formato(data.ticketPromedio);
+    if (productos) productos.textContent = data.productosVendidosMes;
+}
+
+function renderizarGraficoVentasSemana(ventasPorDia, periodo) {
+    const ctx = document.getElementById('graficoVentasSemana');
+    if (!ctx) return;
+
+    if (_graficoVentasSemana) _graficoVentasSemana.destroy();
+
+    const titulo = ctx.parentElement.querySelector('h4');
+    if (titulo) {
+        const titulos = {
+            hoy: '📈 Ventas de hoy',
+            semana: '📈 Ventas de los últimos 7 días',
+            mes: '📈 Ventas por día (mes actual)',
+            'año': '📈 Ventas por mes (año actual)',
+            anio: '📈 Ventas por mes (año actual)'
+        };
+        titulo.textContent = titulos[periodo] || '📈 Ventas';
+    }
+
+    const labels = ventasPorDia.map(v => v.fechaCorta);
+    const totales = ventasPorDia.map(v => v.total);
+
+    const colores = totales.map((t, i) => {
+        if (t === 0) return '#cbd5e1';
+        if (i === totales.length - 1 && periodo !== 'año' && periodo !== 'anio') return '#22c55e';
+        return '#2563eb';
+    });
+
+    _graficoVentasSemana = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Ventas ($)',
+                data: totales,
+                backgroundColor: colores,
+                borderRadius: 6,
+                borderSkipped: false
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const cantidad = ventasPorDia[context.dataIndex]?.cantidad || 0;
+                            return [
+                                'Total: ' + formato(context.raw),
+                                'Ventas: ' + cantidad
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toLocaleString('es-CO');
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderizarGraficoMetodosPago(ventasPorMetodo) {
+    const ctx = document.getElementById('graficoMetodosPago');
+    if (!ctx) return;
+
+    if (_graficoMetodosPago) _graficoMetodosPago.destroy();
+
+    if (!ventasPorMetodo || ventasPorMetodo.length === 0) {
+        ctx.parentElement.innerHTML = '<p style="text-align:center;color:#64748b;padding:40px;">Sin ventas este mes</p>';
+        return;
+    }
+
+    const labels = ventasPorMetodo.map(v => v.metodo);
+    const totales = ventasPorMetodo.map(v => v.total);
+
+    _graficoMetodosPago = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: totales,
+                backgroundColor: ['#2563eb', '#22c55e', '#f59e0b', '#9333ea', '#dc2626'],
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.raw || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const porcentaje = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${formato(value)} (${porcentaje}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderizarTopProductos(topProductos) {
+    const tbody = document.querySelector('#tablaTopProductos tbody');
+    if (!tbody) return;
+
+    if (!topProductos || topProductos.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#64748b;padding:20px;">Sin ventas este mes</td></tr>`;
+        return;
+    }
+
+    const medallas = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+
+    tbody.innerHTML = topProductos.map((p, i) => `
+        <tr>
+            <td style="text-align:center;font-size:18px;">${medallas[i] || (i + 1)}</td>
+            <td><strong>${escapeHtml(p.nombre)}</strong></td>
+            <td style="text-align:center;">${p.cantidadVendida}</td>
+            <td style="text-align:right;">${formato(p.totalGenerado)}</td>
+        </tr>
+    `).join('');
+}
+
+function renderizarUltimasVentas(ultimasVentas) {
+    const tbody = document.querySelector('#tablaReportes tbody');
+    if (!tbody) return;
+
+    if (!ultimasVentas || ultimasVentas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#64748b;padding:20px;">Sin ventas registradas</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = ultimasVentas.map(v => {
+        const fecha = formatearFechaColombia(v.fechaVenta);
+        return `
+            <tr>
+                <td>${fecha}</td>
+                <td>${escapeHtml(v.clienteNombre)}</td>
+                <td style="text-align:center;">${v.cantidadItems}</td>
+                <td style="text-align:right;"><strong>${formato(v.totalFinal)}</strong></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+/* ============================================================
+   18. SIDEBAR
+   ============================================================ */
+
+function setupSidebar() {
+    const sidebarEl = document.querySelector('.sidebar');
+    const btnMenu = document.getElementById('btnMenu');
+    const overlay = document.getElementById('overlay');
+    const btnFix = document.getElementById('btnFixSidebar');
+
+    if (!sidebarEl) return;
+
+    const modoGuardado = localStorage.getItem('pos_sidebar_modo') || 'auto';
+    aplicarModo(modoGuardado);
+
+    function aplicarModo(modo) {
+        sidebarEl.classList.remove('modo-auto', 'modo-fijo');
+        sidebarEl.classList.add(modo === 'fijo' ? 'modo-fijo' : 'modo-auto');
+
+        if (btnFix) {
+            if (modo === 'fijo') {
+                btnFix.textContent = '📌';
+                btnFix.title = 'Desfijar (sidebar se colapsa al salir el mouse)';
+            } else {
+                btnFix.textContent = '📍';
+                btnFix.title = 'Fijar sidebar expandido';
+            }
+        }
+    }
+
+    if (btnFix && !btnFix._listenerAttached) {
+        btnFix._listenerAttached = true;
+        btnFix.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const esFijo = sidebarEl.classList.contains('modo-fijo');
+            const nuevoModo = esFijo ? 'auto' : 'fijo';
+
+            aplicarModo(nuevoModo);
+            localStorage.setItem('pos_sidebar_modo', nuevoModo);
+
+            if (typeof toast === 'function') {
+                toast(
+                    nuevoModo === 'fijo' ? '📌 Sidebar fijado' : '📍 Sidebar en modo auto',
+                    'success'
+                );
+            }
+        });
+    }
+
+    if (btnMenu && overlay) {
+        btnMenu.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sidebarEl.classList.toggle('active');
+            overlay.classList.toggle('active');
+        });
+
+        overlay.addEventListener('click', () => {
+            sidebarEl.classList.remove('active');
+            overlay.classList.remove('active');
+        });
+    }
+
+    if (!sidebarEl._navAttached) {
+        sidebarEl._navAttached = true;
+
+        sidebarEl.addEventListener('click', (e) => {
+            const trigger = e.target.closest('.has-submenu > button');
+            if (trigger) {
+                e.preventDefault();
+                const parent = trigger.parentElement;
+                const abrir = !parent.classList.contains('open');
+
+                sidebarEl.querySelectorAll('.has-submenu').forEach(li => {
+                    if (li !== parent) {
+                        li.classList.remove('open');
+                        li.querySelector(':scope > button')?.setAttribute('aria-expanded', 'false');
+                    }
+                });
+
+                parent.classList.toggle('open', abrir);
+                trigger.setAttribute('aria-expanded', String(abrir));
+                return;
+            }
+
+            const navItem = e.target.closest('[data-vista]');
+            if (!navItem) return;
+
+            e.preventDefault();
+            cargarVista(navItem.dataset.vista);
+
+            sidebarEl.classList.remove('active');
+            overlay?.classList.remove('active');
+        });
+    }
+
+    const clearBtn = document.getElementById('btnClearStorage');
+    if (clearBtn && !clearBtn._listenerAttached) {
+        clearBtn._listenerAttached = true;
+        clearBtn.addEventListener('click', borrarEstadoManual);
+    }
+}
+
+function resaltarMenuActivo(idVista) {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    sidebar.querySelectorAll('[data-vista]').forEach(el => {
+        el.classList.remove('active');
+    });
+    sidebar.querySelectorAll('.has-submenu').forEach(li => {
+        li.classList.remove('has-active-child');
+    });
+
+    const itemActivo = sidebar.querySelector(`[data-vista="${idVista}"]`);
+    if (!itemActivo) return;
+
+    itemActivo.classList.add('active');
+
+    const submenu = itemActivo.closest('.submenu');
+    if (submenu) {
+        const padre = submenu.closest('.has-submenu');
+        if (padre) {
+            padre.classList.add('has-active-child');
+            padre.classList.add('open');
+            padre.querySelector(':scope > button')?.setAttribute('aria-expanded', 'true');
+        }
+    }
+}
+
+/* ============================================================
+   19. RELOJ Y CONEXIÓN
+   ============================================================ */
+
+function iniciarReloj() {
+    const reloj = document.getElementById('relojHeader');
+    if (!reloj) return;
+
+    const actualizar = () => {
+        const ahora = new Date();
+        let h = ahora.getHours();
+        const m = ahora.getMinutes().toString().padStart(2, '0');
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        reloj.textContent = `🕐 ${h.toString().padStart(2, '0')}:${m} ${ampm}`;
+    };
+
+    actualizar();
+    setInterval(actualizar, 10000);
+}
+
+function actualizarEstadoConexion() {
+    const el = document.getElementById('estadoConexion');
+    if (!el) return;
+
+    const actualizar = () => {
+        const online = navigator.onLine;
+        el.textContent = online ? '🟢 Conectado' : '🔴 Sin conexión';
+        el.classList.toggle('online', online);
+        el.classList.toggle('offline', !online);
+    };
+
+    actualizar();
+    window.addEventListener('online', actualizar);
+    window.addEventListener('offline', actualizar);
+}
+
+/* ============================================================
+   20. SPLITTER
+   ============================================================ */
+
+function initSplitter() {
+    const root = document.getElementById('splitRoot');
+    const left = document.getElementById('productos');
+    const right = document.getElementById('contenedor-ventas');
+    const divider = document.querySelector('.split-divider');
+    if (!root || !left || !right || !divider) return;
+
+    function getConfig() {
+        const w = window.innerWidth;
+        if (w < 768) return { activo: false, modo: 'movil' };
+        if (w < 1024) return {
+            activo: true, modo: 'tablet',
+            MIN_LEFT: 300, MIN_RIGHT: 300,
+            MAX_LEFT_RATIO: 0.70, MIN_LEFT_RATIO: 0.30,
+            DEFAULT_RATIO: 0.55
+        };
+        return {
+            activo: true, modo: 'desktop',
+            MIN_LEFT: 400, MIN_RIGHT: 380,
+            MAX_LEFT_RATIO: 0.65, MIN_LEFT_RATIO: 0.35,
+            DEFAULT_RATIO: 0.55
+        };
+    }
+
+    let config = getConfig();
+
+    function getTotal() {
+        return Math.max(0, root.clientWidth - divider.offsetWidth);
+    }
+
+    function clampLeft(w, total) {
+        const { MIN_LEFT, MIN_RIGHT, MAX_LEFT_RATIO, MIN_LEFT_RATIO } = config;
+        const minLeft = Math.max(MIN_LEFT, total * MIN_LEFT_RATIO);
+        const maxLeft = Math.min(total * MAX_LEFT_RATIO, total - MIN_RIGHT);
+
+        if (minLeft > maxLeft) return Math.max(MIN_LEFT, total - MIN_RIGHT);
+        return Math.max(minLeft, Math.min(maxLeft, Math.round(w)));
+    }
+
+    function applyLeft(px) {
+        left.style.flex = `0 0 ${px}px`;
+        right.style.flex = '1 1 auto';
+    }
+
+    function applyRatio(r) {
+        if (!config.activo) return;
+        const total = getTotal();
+        if (total <= 0) return;
+        applyLeft(clampLeft(r * total, total));
+    }
+
+    let persistedRatio = config.DEFAULT_RATIO;
+    try {
+        const saved = localStorage.getItem(STORAGE_KEYS.SPLIT_RATIO);
+        if (saved) {
+            const r = parseFloat(saved);
+            if (!isNaN(r) && r > 0 && r < 1) persistedRatio = r;
+        }
+    } catch {}
+
+    requestAnimationFrame(() => applyRatio(persistedRatio));
+
+    let dragging = false, startX = 0, startLeft = 0;
+
+    function onMove(e) {
+        if (!dragging) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const dx = clientX - startX;
+        const total = getTotal();
+        applyLeft(clampLeft(startLeft + dx, total));
+    }
+
+    function endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('split-dragging');
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', endDrag);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', endDrag);
+
+        const total = getTotal();
+        const leftWidth = left.getBoundingClientRect().width;
+        const newRatio = total > 0 ? leftWidth / total : config.DEFAULT_RATIO;
+        localStorage.setItem(STORAGE_KEYS.SPLIT_RATIO, newRatio.toFixed(3));
+    }
+
+    divider.addEventListener('mousedown', (e) => {
+        if (!config.activo) return;
+        e.preventDefault();
+        dragging = true;
+        startX = e.clientX;
+        startLeft = left.getBoundingClientRect().width;
+        document.body.classList.add('split-dragging');
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', endDrag);
+    });
+
+    divider.addEventListener('touchstart', (e) => {
+        if (!config.activo) return;
+        const t = e.touches[0];
+        if (!t) return;
+        dragging = true;
+        startX = t.clientX;
+        startLeft = left.getBoundingClientRect().width;
+        document.body.classList.add('split-dragging');
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', endDrag);
+    }, { passive: true });
+
+    divider.addEventListener('dblclick', () => {
+        if (!config.activo) return;
+        localStorage.removeItem(STORAGE_KEYS.SPLIT_RATIO);
+        persistedRatio = config.DEFAULT_RATIO;
+        applyRatio(persistedRatio);
+    });
+
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        if (dragging) return;
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            const nuevaConfig = getConfig();
+            if (nuevaConfig.modo !== config.modo) {
+                config = nuevaConfig;
+                left.style.flex = '';
+                right.style.flex = '';
+                if (config.activo) {
+                    requestAnimationFrame(() => applyRatio(persistedRatio));
+                }
+            } else {
+                config = nuevaConfig;
+                if (config.activo) {
+                    const total = getTotal();
+                    const leftWidth = left.getBoundingClientRect().width;
+                    applyLeft(clampLeft(leftWidth, total));
+                }
+            }
+        }, 150);
+
+         const fab = document.getElementById('cartFab');
+            const drawer = document.querySelector('.cart-drawer');
+            const backdrop = document.querySelector('.cart-drawer-backdrop');
+            const esDesktop = window.innerWidth > 760 && !document.documentElement.classList.contains('split-catalogo-full');
+
+            if (fab) {
+                fab.style.display = esDesktop ? 'none' : 'flex';
+            }
+
+            // Cerrar el drawer si pasamos a desktop
+            if (esDesktop) {
+                drawer?.classList.remove('open');
+                backdrop?.classList.remove('visible');
+            }
+
+            // Cerrar el drawer y el FAB al cambiar de tamaño
+            window.addEventListener('resize', () => {
+                const esDesktop = window.innerWidth > 760;
+
+                if (esDesktop) {
+                    // Ocultar FAB
+                    const fab = document.getElementById('cartFab');
+                    if (fab) fab.style.display = 'none';
+
+                    // Cerrar cualquier drawer abierto
+                    document.querySelector('.cart-drawer')?.classList.remove('open');
+                    document.querySelector('.cart-drawer-backdrop')?.classList.remove('visible');
+
+                    // Cerrar carritos con .visible
+                    document.querySelectorAll('.carrito.visible').forEach(c => c.classList.remove('visible'));
+                }
+            });
+    });
+}
+
+/* ============================================================
+   21. DRAWER DEL CARRITO (MÓVIL)
+   ============================================================ */
+
+function setupCartDrawer() {
+    const fab = document.getElementById('cartFab');
+    const drawer = document.getElementById('cartDrawer');
+    const backdrop = document.getElementById('cartDrawerBackdrop');
+    const cerrarBtn = document.getElementById('cerrarCartDrawer');
+    const drawerBody = document.getElementById('cartDrawerBody');
+    const contenedorOriginal = document.getElementById('contenedor-ventas');
+
+    if (!fab || !drawer || !backdrop || !drawerBody || !contenedorOriginal) {
+        console.warn('⚠️ Drawer del carrito: faltan elementos en el DOM');
+        return;
+    }
+
+    const ventaOriginalPadre = new WeakMap();
+
+    function abrirDrawer() {
+        const ventaId = estado.pestañaActiva || 'venta1';
+        const ventaEl = document.getElementById(ventaId);
+
+        if (!ventaEl) {
+            toast('No hay carrito activo', 'error');
+            return;
+        }
+
+        if (!ventaOriginalPadre.has(ventaEl)) {
+            ventaOriginalPadre.set(ventaEl, ventaEl.parentElement);
+        }
+
+        drawerBody.appendChild(ventaEl);
+        ventaEl.classList.add('active');
+        ventaEl.style.display = 'block';
+
+        drawer.classList.add('open');
+        backdrop.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+
+        if (typeof renderCarrito === 'function') {
+            renderCarrito(ventaId);
+        }
+    }
+
+    function cerrarDrawer() {
+        drawerBody.querySelectorAll('.venta').forEach(ventaEl => {
+            const padreOriginal = ventaOriginalPadre.get(ventaEl);
+            if (padreOriginal) {
+                padreOriginal.appendChild(ventaEl);
+            }
+            ventaEl.style.display = '';
+        });
+
+        drawer.classList.remove('open');
+        backdrop.classList.remove('visible');
+        document.body.style.overflow = '';
+    }
+
+    if (!fab._drawerAttached) {
+        fab._drawerAttached = true;
+        fab.addEventListener('click', abrirDrawer);
+    }
+
+    if (cerrarBtn && !cerrarBtn._drawerAttached) {
+        cerrarBtn._drawerAttached = true;
+        cerrarBtn.addEventListener('click', cerrarDrawer);
+    }
+
+    if (backdrop && !backdrop._drawerAttached) {
+        backdrop._drawerAttached = true;
+        backdrop.addEventListener('click', cerrarDrawer);
+    }
+
+    if (!document._drawerEscAttached) {
+        document._drawerEscAttached = true;
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && drawer.classList.contains('open')) {
+                cerrarDrawer();
+            }
+        });
+    }
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768 && drawer.classList.contains('open')) {
+            cerrarDrawer();
+        }
+    });
+}
+
+/* ============================================================
+   22. FAB ARRASTRABLE
+   ============================================================ */
+
+function makeDraggable(buttonId, storageKey) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+
+    let isDragging = false, offsetX = 0, offsetY = 0;
+
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+        try {
+            const { x, y } = JSON.parse(saved);
+            btn.style.left = `${x}px`;
+            btn.style.top = `${y}px`;
+            btn.style.right = 'auto';
+            btn.style.bottom = 'auto';
+        } catch {}
+    }
+
+    btn.addEventListener('mousedown', e => {
+        isDragging = true;
+        offsetX = e.clientX - btn.getBoundingClientRect().left;
+        offsetY = e.clientY - btn.getBoundingClientRect().top;
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        let x = e.clientX - offsetX;
+        let y = e.clientY - offsetY;
+        const maxX = window.innerWidth - btn.offsetWidth;
+        const maxY = window.innerHeight - btn.offsetHeight;
+        x = Math.max(0, Math.min(x, maxX));
+        y = Math.max(0, Math.min(y, maxY));
+        btn.style.left = `${x}px`;
+        btn.style.top = `${y}px`;
+        btn.style.right = 'auto';
+        btn.style.bottom = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            localStorage.setItem(storageKey, JSON.stringify({
+                x: btn.offsetLeft,
+                y: btn.offsetTop
+            }));
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        btn.style.left = '';
+        btn.style.top = '';
+        btn.style.right = '25px';
+        btn.style.bottom = '25px';
+        localStorage.removeItem(storageKey);
+    });
+}
+
+/* ============================================================
+   23. TEMA OSCURO
+   ============================================================ */
+
+function initTema() {
+    const btnTema = document.getElementById('btnTema');
+    const html = document.documentElement;
+    const temaGuardado = localStorage.getItem(STORAGE_KEYS.THEME);
+
+    if (temaGuardado === 'dark') {
+        html.setAttribute('data-theme', 'dark');
+        if (btnTema) btnTema.textContent = '☀️';
+    }
+
+    if (btnTema && !btnTema._listenerAttached) {
+        btnTema._listenerAttached = true;
+        btnTema.addEventListener('click', () => {
+            const esOscuro = html.getAttribute('data-theme') === 'dark';
+            if (esOscuro) {
+                html.setAttribute('data-theme', 'light');
+                btnTema.textContent = '🌙';
+                localStorage.setItem(STORAGE_KEYS.THEME, 'light');
+            } else {
+                html.setAttribute('data-theme', 'dark');
+                btnTema.textContent = '☀️';
+                localStorage.setItem(STORAGE_KEYS.THEME, 'dark');
+            }
+        });
+    }
+}
+
+/* ============================================================
+   24. IMPORTACIÓN MASIVA
+   ============================================================ */
+
+let _importArchivoSeleccionado = null;
+let _progressInterval = null;
+
+function setupImportacionListeners() {
+    const btnImportar = document.getElementById('btnImportarProductos');
+    const modal = document.getElementById('modalImportar');
+    const cerrar = document.getElementById('cerrarModalImportar');
+    const btnCancelar = document.getElementById('btnCancelarImportar');
+    const btnVolver = document.getElementById('btnVolverImportar');
+    const btnCerrar = document.getElementById('btnCerrarImportar');
+    const inputArchivo = document.getElementById('importArchivo');
+    const btnPreview = document.getElementById('btnPreviewImportar');
+    const btnConfirmar = document.getElementById('btnConfirmarImportar');
+    const btnPlantilla = document.getElementById('btnDescargarPlantilla');
+
+    if (!btnImportar || !modal) return;
+
+    if (!btnImportar._importAttached) {
+        btnImportar._importAttached = true;
+        btnImportar.addEventListener('click', () => {
+            resetearImportModal();
+            showModal(modal);
+        });
+    }
+
+    [cerrar, btnCancelar, btnCerrar].forEach(btn => {
+        if (btn && !btn._importAttached) {
+            btn._importAttached = true;
+            btn.addEventListener('click', () => hideModal(modal));
+        }
+    });
+
+    if (btnVolver && !btnVolver._importAttached) {
+        btnVolver._importAttached = true;
+        btnVolver.addEventListener('click', () => {
+            document.getElementById('importPaso1').style.display = 'block';
+            document.getElementById('importPaso2').style.display = 'none';
+            document.getElementById('importPaso3').style.display = 'none';
+        });
+    }
+
+    if (inputArchivo && !inputArchivo._importAttached) {
+        inputArchivo._importAttached = true;
+        inputArchivo.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            _importArchivoSeleccionado = file || null;
+
+            const nombreEl = document.getElementById('importNombreArchivo');
+            if (file) {
+                nombreEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                btnPreview.disabled = false;
+            } else {
+                nombreEl.textContent = 'Sin archivo seleccionado';
+                btnPreview.disabled = true;
+            }
+        });
+    }
+
+    if (btnPlantilla && !btnPlantilla._importAttached) {
+        btnPlantilla._importAttached = true;
+        btnPlantilla.addEventListener('click', async (e) => {
+            e.preventDefault();
+            try {
+                const token = localStorage.getItem('pos_token');
+                const resp = await fetch(`${API_BASE_URL}/Importacion/productos/plantilla`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!resp.ok) {
+                    toast('Error al descargar la plantilla', 'error');
+                    return;
+                }
+
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'plantilla-productos.xlsx';
+                a.click();
+                URL.revokeObjectURL(url);
+                toast('✅ Plantilla descargada');
+            } catch (err) {
+                console.error(err);
+                toast('Error al descargar la plantilla', 'error');
+            }
+        });
+    }
+
+    if (btnPreview && !btnPreview._importAttached) {
+        btnPreview._importAttached = true;
+        btnPreview.addEventListener('click', previsualizarImportacion);
+    }
+
+    if (btnConfirmar && !btnConfirmar._importAttached) {
+        btnConfirmar._importAttached = true;
+        btnConfirmar.addEventListener('click', confirmarImportacion);
+    }
+}
+
+function resetearImportModal() {
+    _importArchivoSeleccionado = null;
+    document.getElementById('importPaso1').style.display = 'block';
+    document.getElementById('importPaso2').style.display = 'none';
+    document.getElementById('importPaso3').style.display = 'none';
+    document.getElementById('importNombreArchivo').textContent = 'Sin archivo seleccionado';
+    document.getElementById('importArchivo').value = '';
+    document.getElementById('btnPreviewImportar').disabled = true;
+}
+
+async function previsualizarImportacion() {
+    if (!_importArchivoSeleccionado) {
+        toast('Selecciona un archivo primero', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btnPreviewImportar');
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Analizando...';
+
+    mostrarProgreso('📤 Preparando análisis...', 0, `${_importArchivoSeleccionado.name}`);
+
+    try {
+        const formData = new FormData();
+        formData.append('archivo', _importArchivoSeleccionado);
+
+        await new Promise(r => setTimeout(r, 150));
+        actualizarProgreso(20, '📖 Leyendo Excel...', '');
+
+        const token = localStorage.getItem('pos_token');
+        const resp = await fetch(`${API_BASE_URL}/Importacion/productos/preview`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token },
+            body: formData
+        });
+
+        if (!resp.ok) {
+            ocultarProgreso();
+            const err = await resp.json().catch(() => ({}));
+            toast(err.message || 'Error al procesar el archivo', 'error');
+            return;
+        }
+
+        actualizarProgreso(80, '🔍 Validando filas...', '');
+
+        const data = await resp.json();
+
+        actualizarProgreso(100, '✅ Análisis completado', `${data.totalFilas} filas procesadas`);
+        await new Promise(r => setTimeout(r, 400));
+        ocultarProgreso();
+
+        renderizarPreviewImportacion(data);
+
+        document.getElementById('importPaso1').style.display = 'none';
+        document.getElementById('importPaso2').style.display = 'block';
+
+    } catch (err) {
+        console.error(err);
+        ocultarProgreso();
+        toast('Error al procesar el archivo', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = textoOriginal;
+    }
+}
+
+function renderizarPreviewImportacion(data) {
+    const resumen = document.getElementById('importResumen');
+    const ok = (data.resumen.nuevos || 0) + (data.resumen.actualizables || 0);
+
+    resumen.innerHTML = `
+        <div class="resumen-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;">
+            <div class="card-resumen azul"><h4>Total</h4><p>${data.totalFilas}</p></div>
+            <div class="card-resumen verde"><h4>Válidas</h4><p>${ok}</p></div>
+            <div class="card-resumen celeste"><h4>Nuevas</h4><p>${data.resumen.nuevos}</p></div>
+            <div class="card-resumen gris"><h4>Actualizar</h4><p>${data.resumen.actualizables}</p></div>
+            <div class="card-resumen" style="background: linear-gradient(135deg, #dc2626, #991b1b);"><h4>Errores</h4><p>${data.resumen.errores}</p></div>
+        </div>
+    `;
+
+    const cont = document.getElementById('importTablaPreview');
+
+    const filasHtml = (data.filas || []).map(f => {
+        const estado = f.esValida
+            ? (f.existeEnBd
+                ? '<span style="color:#f59e0b; font-weight:600;">🔄 Actualizar</span>'
+                : '<span style="color:#16a34a; font-weight:600;">➕ Crear</span>')
+            : '<span style="color:#dc2626; font-weight:600;">❌ Error</span>';
+
+        const erroresTexto = (f.errores && f.errores.length > 0)
+            ? `<div style="font-size: 10px; color: #dc2626; margin-top: 2px;">${f.errores.join(' • ')}</div>`
+            : '';
+
+        const estiloFila = f.esValida ? '' : 'background: rgba(220,38,38,0.08);';
+
+        return `
+            <tr style="${estiloFila}">
+                <td style="text-align:center;">${f.fila}</td>
+                <td>${escapeHtml(f.codigoInterno || '')}${erroresTexto}</td>
+                <td>${escapeHtml(f.nombre || '')}</td>
+                <td>${escapeHtml(f.categoria || '-')}</td>
+                <td style="text-align:right;">${formato(f.precioVenta)}</td>
+                <td style="text-align:center;">${f.stockActual}</td>
+                <td style="text-align:center;">${estado}</td>
+            </tr>
+        `;
+    }).join('');
+
+    cont.innerHTML = `
+        <table class="tabla-carrito" style="font-size: 12px; margin: 0; width: 100%;">
+            <thead style="position: sticky; top: 0; background: var(--bg-panel); z-index: 1;">
+                <tr>
+                    <th style="width: 50px;">Fila</th>
+                    <th>Código</th>
+                    <th>Nombre</th>
+                    <th>Categoría</th>
+                    <th style="text-align:right;">Precio</th>
+                    <th style="text-align:center; width: 70px;">Stock</th>
+                    <th style="text-align:center; width: 100px;">Estado</th>
+                </tr>
+            </thead>
+            <tbody>${filasHtml}</tbody>
+        </table>
+    `;
+
+    const btnConfirmar = document.getElementById('btnConfirmarImportar');
+    if (btnConfirmar) {
+        if (ok === 0) {
+            btnConfirmar.disabled = true;
+            btnConfirmar.textContent = '⛔ No hay filas válidas';
+        } else {
+            btnConfirmar.disabled = false;
+            btnConfirmar.textContent = `✅ Confirmar importación (${ok})`;
+        }
+    }
+}
+
+async function confirmarImportacion() {
+    if (!_importArchivoSeleccionado) {
+        toast('No hay archivo seleccionado', 'error');
+        return;
+    }
+
+    const modoInput = document.querySelector('input[name="importModo"]:checked');
+    const modo = modoInput ? modoInput.value : 'ambos';
+
+    if (!confirm(`¿Confirmas la importación en modo "${modo}"?\n\nEsta acción modificará la base de datos.`)) {
+        return;
+    }
+
+    const btn = document.getElementById('btnConfirmarImportar');
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Importando...';
+
+    mostrarProgreso('💾 Preparando importación...', 0, 'No cierres esta ventana');
+
+    try {
+        const formData = new FormData();
+        formData.append('archivo', _importArchivoSeleccionado);
+        formData.append('modo', modo);
+
+        const token = localStorage.getItem('pos_token');
+
+        const resp = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${API_BASE_URL}/Importacion/productos/confirmar`);
+
+            xhr.upload.onload = () => {
+                mostrarProgreso('⚙️ Procesando en el servidor...', null,
+                    'Esto puede tardar 1-5 minutos según el tamaño del archivo');
+            };
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve({
+                        ok: true,
+                        status: xhr.status,
+                        json: () => Promise.resolve(JSON.parse(xhr.responseText))
+                    });
+                } else {
+                    resolve({
+                        ok: false,
+                        status: xhr.status,
+                        json: () => Promise.resolve(JSON.parse(xhr.responseText || '{}'))
+                    });
+                }
+            };
+
+            xhr.onerror = () => reject(new Error('Error de red'));
+
+            xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+            xhr.send(formData);
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            ocultarProgreso();
+            toast(err.message || 'Error al importar', 'error');
+            btn.disabled = false;
+            btn.textContent = textoOriginal;
+            return;
+        }
+
+        actualizarProgreso(100, '✅ Importación completada', '');
+
+        const data = await resp.json();
+
+        await new Promise(r => setTimeout(r, 600));
+        ocultarProgreso();
+
+        renderizarResultadoImportacion(data);
+
+        document.getElementById('importPaso2').style.display = 'none';
+        document.getElementById('importPaso3').style.display = 'block';
+
+        if (typeof initInventario === 'function') await initInventario();
+        if (typeof cargarProductosDesdeAPI === 'function') await cargarProductosDesdeAPI();
+
+    } catch (err) {
+        console.error(err);
+        ocultarProgreso();
+        toast('Error al importar el archivo', 'error');
+        btn.disabled = false;
+        btn.textContent = textoOriginal;
+    }
+}
+
+function renderizarResultadoImportacion(data) {
+    const cont = document.getElementById('importResultado');
+    const exitosos = (data.creados || 0) + (data.actualizados || 0);
+
+    let erroresHtml = '';
+    if (data.detalleErrores && data.detalleErrores.length > 0) {
+        erroresHtml = `
+            <details style="margin-top: 16px; background: rgba(220,38,38,0.08); padding: 12px; border-radius: 8px;">
+                <summary style="cursor: pointer; font-weight: 600; color: #dc2626;">
+                    ⚠️ Ver detalle de ${data.detalleErrores.length} error(es)
+                </summary>
+                <ul style="margin: 8px 0 0 20px; font-size: 12px; color: #64748b;">
+                    ${data.detalleErrores.map(e => `
+                        <li>Fila ${e.fila} (${escapeHtml(e.codigoInterno || '')}): ${escapeHtml(e.error || 'Error desconocido')}</li>
+                    `).join('')}
+                </ul>
+            </details>
+        `;
+    }
+
+    cont.innerHTML = `
+        <div style="text-align: center; padding: 20px 0;">
+            <div style="font-size: 48px; margin-bottom: 12px;">${exitosos > 0 ? '✅' : '⚠️'}</div>
+            <h3 style="margin: 0 0 8px;">${exitosos > 0 ? '¡Importación completada!' : 'No se importó nada'}</h3>
+            <p style="color: #64748b; font-size: 13px; margin: 0;">
+                Se procesaron ${data.total || 0} fila(s) del archivo.
+            </p>
+        </div>
+
+        <div class="resumen-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 16px;">
+            <div class="card-resumen verde"><h4>Creados</h4><p>${data.creados || 0}</p></div>
+            <div class="card-resumen celeste"><h4>Actualizados</h4><p>${data.actualizados || 0}</p></div>
+            <div class="card-resumen" style="background: linear-gradient(135deg, #dc2626, #991b1b);"><h4>Errores</h4><p>${data.errores || 0}</p></div>
+        </div>
+
+        ${erroresHtml}
+    `;
+}
+
+function mostrarProgreso(texto = 'Procesando...', porcentaje = null, detalle = '') {
+    const cont = document.getElementById('importBarraProgreso');
+    const fill = document.getElementById('importBarraFill');
+    const textEl = document.getElementById('importProgresoTexto');
+    const pctEl = document.getElementById('importProgresoPorcentaje');
+    const detEl = document.getElementById('importProgresoDetalle');
+
+    if (!cont || !fill) return;
+
+    cont.style.display = 'block';
+    textEl.textContent = texto;
+    detEl.textContent = detalle;
+
+    if (_progressInterval) {
+        clearInterval(_progressInterval);
+        _progressInterval = null;
+    }
+
+    if (porcentaje === null || porcentaje === undefined) {
+        pctEl.textContent = '';
+        fill.style.width = '0%';
+
+        let fakeProgress = 0;
+        _progressInterval = setInterval(() => {
+            const incremento = fakeProgress < 50 ? 3 : fakeProgress < 80 ? 1 : 0.3;
+            fakeProgress = Math.min(90, fakeProgress + incremento);
+            fill.style.width = fakeProgress + '%';
+        }, 200);
+    } else {
+        const pct = Math.max(0, Math.min(100, porcentaje));
+        pctEl.textContent = pct + '%';
+        fill.style.width = pct + '%';
+        fill.style.transition = 'width 0.3s ease';
+    }
+}
+
+function actualizarProgreso(porcentaje, texto = null, detalle = null) {
+    const fill = document.getElementById('importBarraFill');
+    const pctEl = document.getElementById('importProgresoPorcentaje');
+    const textEl = document.getElementById('importProgresoTexto');
+    const detEl = document.getElementById('importProgresoDetalle');
+
+    if (!fill) return;
+
+    if (_progressInterval) {
+        clearInterval(_progressInterval);
+        _progressInterval = null;
+    }
+
+    const pct = Math.max(0, Math.min(100, porcentaje));
+    pctEl.textContent = pct + '%';
+    fill.style.width = pct + '%';
+
+    if (texto !== null) textEl.textContent = texto;
+    if (detalle !== null) detEl.textContent = detalle;
+}
+
+function ocultarProgreso() {
+    const cont = document.getElementById('importBarraProgreso');
+    const fill = document.getElementById('importBarraFill');
+
+    if (_progressInterval) {
+        clearInterval(_progressInterval);
+        _progressInterval = null;
+    }
+
+    if (cont) cont.style.display = 'none';
+    if (fill) fill.style.width = '0%';
+}
+
+// ============================================================
+// Callback al escanear un código en el catálogo de Ventas
+// Se llama cuando el usuario presiona Enter después de "escanear".
+// ============================================================
+function onScanCatalogo(codigo, encontrados, input) {
+    console.log('🔫 Código escaneado:', codigo, '| Resultados:', encontrados.length);
+
+    if (!encontrados || encontrados.length === 0) {
+        toast(`Código "${codigo}" no encontrado`, 'error');
+        return;
+    }
+
+    const item = encontrados[0];
+    const elemento = item._el;
+
+    if (!elemento) {
+        toast('Producto no visible para agregar', 'error');
+        return;
+    }
+
+    const btnAgregar = elemento.querySelector('.agregar');
+    if (btnAgregar && !btnAgregar.disabled) {
+        btnAgregar.click();
+        toast(`✅ "${item.nombre}" agregado al carrito`);
+    } else {
+        toast(`"${item.nombre}" sin stock o no disponible`, 'error');
+    }
+}
+
+function mostrarBotonCarritoSiAplica(vistaId) {
+    const existente = document.getElementById('cartFab');
+    const esDesktop = window.innerWidth > 760 && !document.documentElement.classList.contains('split-catalogo-full');
+
+    // 🆕 En desktop, SIEMPRE ocultar el FAB
+    if (esDesktop) {
+        if (existente) existente.style.display = 'none';
+        return;
+    }
+
+    // 🆕 En otras vistas, quitar el FAB
+    if (vistaId !== 'ventas') {
+        if (existente) existente.remove();
+        return;
+    }
+
+    // Móvil: crear o mostrar el FAB
+    if (!existente) {
+        const btn = document.createElement('button');
+        btn.id = 'cartFab';
+        btn.innerHTML = '🛒';
+        btn.title = 'Ver carrito';
+        btn.style.position = 'fixed';
+        btn.style.right = '25px';
+        btn.style.bottom = '25px';
+        btn.style.zIndex = 9999;
+        btn.style.display = 'flex';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        document.body.appendChild(btn);
+        conectarFabCarrito();
+    } else {
+        existente.style.display = 'flex';
+    }
+}
+
+function conectarFabCarrito() {
+    const cartFabEl = document.getElementById('cartFab');
+    if (!cartFabEl || cartFabEl._listenerAttached) return;
+
+    cartFabEl._listenerAttached = true;
+
+    cartFabEl.addEventListener('click', () => {
+        // Verificar si estamos en móvil
+        const esMobile = window.innerWidth <= 760 
+                      || document.documentElement.classList.contains('split-catalogo-full');
+
+        if (esMobile) {
+            // Móvil: abrir el drawer
+            if (typeof openDrawer === 'function') {
+                openDrawer();
+            } else {
+                // Fallback: mostrar el carrito con la clase .visible
+                const ventaId = estado?.pestañaActiva || 'venta1';
+                const ventaDiv = document.getElementById(ventaId);
+                const carrito = ventaDiv?.querySelector('.carrito');
+                if (carrito) carrito.classList.toggle('visible');
+            }
+        } else {
+            // Desktop: NO hacer nada (el FAB ni se ve)
+            console.log('ℹ️ FAB clickeado en desktop — ignorado');
+        }
+    });
+}
+
+function openDrawer() {
+    let drawer = document.querySelector('.cart-drawer');
+    let backdrop = document.querySelector('.cart-drawer-backdrop');
+
+    if (!drawer) {
+        drawer = document.createElement('aside');
+        drawer.className = 'cart-drawer';
+        drawer.innerHTML = `
+            <div class="drawer-header">
+                <span>🛒 Carrito</span>
+                <button class="drawer-close">✕</button>
+            </div>
+            <div class="drawer-body"></div>
+        `;
+        document.body.appendChild(drawer);
+        drawer.querySelector('.drawer-close').onclick = closeDrawer;
+    }
+
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.className = 'cart-drawer-backdrop';
+        backdrop.onclick = closeDrawer;
+        document.body.appendChild(backdrop);
+    }
+
+    const ventaId = estado?.pestañaActiva || 'venta1';
+    const ventaDiv = document.getElementById(ventaId);
+    const carrito = ventaDiv?.querySelector('.carrito');
+    const drawerBody = drawer.querySelector('.drawer-body');
+
+    if (carrito && drawerBody) {
+        // Guardar el padre original
+        carrito._padreOriginal = carrito.parentElement;
+        carrito._siguienteHermano = carrito.nextElementSibling;
+        
+        // Forzar visibilidad total
+        carrito.style.cssText = `
+            display: flex !important;
+            flex-direction: column !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            position: static !important;
+            width: 100% !important;
+            background: #1e293b !important;
+            border-radius: 10px !important;
+            padding: 14px !important;
+            box-sizing: border-box !important;
+        `;
+
+        // MOVER al drawer
+        drawerBody.innerHTML = '';
+        drawerBody.appendChild(carrito);
+        
+        console.log('✅ Carrito MOVIDO al drawer');
+    }
+
+    drawer.classList.add('open');
+    backdrop.classList.add('visible');
+}
+
+function closeDrawer() {
+    const drawer = document.querySelector('.cart-drawer');
+    const carrito = drawer?.querySelector('.carrito');
+
+    // Devolver el carrito a su padre original
+    if (carrito && carrito._padreOriginal) {
+        if (carrito._siguienteHermano) {
+            carrito._padreOriginal.insertBefore(carrito, carrito._siguienteHermano);
+        } else {
+            carrito._padreOriginal.appendChild(carrito);
+        }
+        
+        // Resetear estilos
+        carrito.style.cssText = '';
+    }
+
+    drawer?.classList.remove('open');
+    document.querySelector('.cart-drawer-backdrop')?.classList.remove('visible');
+}
+// ============================================================
+// Filtrar los accesos rápidos según el rol del usuario
+// ============================================================
+function filtrarAccesosRapidosPorRol() {
+    // Obtener el usuario del localStorage
+    let usuario = null;
+    try {
+        usuario = JSON.parse(localStorage.getItem('pos_usuario'));
+    } catch (e) {
+        console.warn('No se pudo leer el usuario del localStorage');
+        return;
+    }
+
+    if (!usuario) {
+        console.warn('No hay usuario logueado');
+        return;
+    }
+
+    const idRol = String(usuario.rol || usuario.idRol || '').trim();
+    console.log(`🔒 Filtrando accesos rápidos para rol: ${idRol}`);
+
+    // Obtener todos los accesos rápidos
+    const botones = document.querySelectorAll('.quick-action[data-roles]');
+
+    botones.forEach(btn => {
+        const rolesPermitidos = (btn.dataset.roles || '').split(',').map(r => r.trim());
+        const visible = rolesPermitidos.includes(idRol);
+
+        btn.style.display = visible ? 'flex' : 'none';
+    });
+
+    console.log(`✅ ${document.querySelectorAll('.quick-action[data-roles]:not([style*="display: none"])').length} accesos rápidos visibles`);
+}
+function registrarUsoVista(idVista) {
+    try {
+        const uso = JSON.parse(localStorage.getItem('pos_uso_vistas') || '{}');
+        uso[idVista] = (uso[idVista] || 0) + 1;
+        localStorage.setItem('pos_uso_vistas', JSON.stringify(uso));
+    } catch (e) { /* ignorar */ }
+}
+
+function obtenerTop3Vistas() {
+    try {
+        const uso = JSON.parse(localStorage.getItem('pos_uso_vistas') || '{}');
+        return Object.entries(uso)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 3)
+            .map(([vista]) => vista);
+    } catch (e) {
+        return [];
+    }
+}
+
+// ============================================================
+// CATÁLOGO DE ACCESOS RÁPIDOS DISPONIBLES
+// ============================================================
+const CATALOGO_ACCESOS = {
+    // Vistas de Ventas
+    ventas: {
+        emoji: '🆕',
+        label: 'Nueva Venta',
+        roles: [1, 2]   // admin y cajero
+    },
+    historial: {
+        emoji: '🕐',
+        label: 'Historial',
+        roles: [1, 2]
+    },
+
+    // Vistas de Inventario (solo admin)
+    inventario: {
+        emoji: '📦',
+        label: 'Inventario',
+        roles: [1]
+    },
+    categorias: {
+        emoji: '🏷️',
+        label: 'Categorías',
+        roles: [1]
+    },
+
+    // Vistas de Clientes
+    clientes: {
+        emoji: '👥',
+        label: 'Clientes',
+        roles: [1, 2]
+    },
+
+    // Vistas administrativas (solo admin)
+    inicio: {
+        emoji: '📊',
+        label: 'Dashboard',
+        roles: [1]
+    },
+    usuarios: {
+        emoji: '👤',
+        label: 'Usuarios',
+        roles: [1]
+    },
+    reportes: {
+        emoji: '📈',
+        label: 'Reportes',
+        roles: [1]
+    }
+};
+
+// Accesos por defecto (si el usuario no tiene historial)
+const ACCESOS_DEFAULT = ['ventas', 'historial', 'inventario'];
+
+// ============================================================
+// RENDERIZAR ACCESOS RÁPIDOS DINÁMICAMENTE
+// ============================================================
+function renderAccesosRapidos() {
+    const contenedor = document.querySelector('.sidebar-quick-actions');
+    if (!contenedor) {
+        console.warn('⚠️ No existe .sidebar-quick-actions en el HTML');
+        return;
+    }
+
+    // 1. Obtener el usuario y su rol
+    let usuario = null;
+    try {
+        usuario = JSON.parse(localStorage.getItem('pos_usuario'));
+    } catch (e) { /* ignorar */ }
+
+    const idRol = usuario ? parseInt(usuario.rol || usuario.idRol || 1, 10) : 1;
+
+    // 2. Obtener las top 3 vistas del usuario
+    let topVistas = obtenerTopVistas(3);
+
+    // 3. Si no hay historial, usar las vistas por defecto
+    if (topVistas.length === 0) {
+        topVistas = [...ACCESOS_DEFAULT];
+    }
+
+    // 4. Filtrar por rol y por catálogo
+    const accesosValidos = topVistas
+        .filter(vistaId => {
+            const acceso = CATALOGO_ACCESOS[vistaId];
+            return acceso && acceso.roles.includes(idRol);
+        })
+        .slice(0, 3);
+
+    // 5. Si quedan menos de 3, completar con las por defecto
+    if (accesosValidos.length < 3) {
+        for (const vistaId of ACCESOS_DEFAULT) {
+            if (accesosValidos.length >= 3) break;
+            const acceso = CATALOGO_ACCESOS[vistaId];
+            if (acceso && acceso.roles.includes(idRol) && !accesosValidos.includes(vistaId)) {
+                accesosValidos.push(vistaId);
+            }
+        }
+    }
+
+    // 6. Renderizar los botones
+    contenedor.innerHTML = accesosValidos.map(vistaId => {
+        const acc = CATALOGO_ACCESOS[vistaId];
+        return `
+            <button class="quick-action" 
+                    title="${escapeHtml(acc.label)}" 
+                    data-vista="${vistaId}">
+                ${acc.emoji} <span class="quick-label">${escapeHtml(acc.label)}</span>
+            </button>
+        `;
+    }).join('');
+
+    // 7. Agregar listeners de click
+    contenedor.querySelectorAll('.quick-action').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const vista = btn.dataset.vista;
+            if (vista) {
+                cargarVista(vista);
+
+                // Actualizar el estado activo del menú
+                document.querySelectorAll('.sidebar [data-vista]').forEach(b => b.classList.remove('active'));
+                document.querySelector(`.sidebar [data-vista="${vista}"]`)?.classList.add('active');
+            }
+        });
+    });
+
+    console.log(`⚡ Accesos rápidos renderizados: ${accesosValidos.join(', ')}`);
+}
+
+/* ============================================================
+   25. INICIALIZACIÓN
+   ============================================================ */
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 Iniciando MultiVentas POS...');
+
+    // 1. Base
+    restaurarEstado();
+    iniciarReloj();
+    actualizarEstadoConexion();
+    initTema();
+    setupSidebar();
+
+    // 2. Modales y listeners globales
+    setupFinalizarVentaModal();
+    setupHistorialListeners();
+    setupCartDrawer();
+    setupImportacionListeners();
+
+    // 3. Vista inicial
+    cargarVista('ventas');
+
+    // 4. Menú activo
+    if (typeof resaltarMenuActivo === 'function') {
+        resaltarMenuActivo(estado.pestañaActiva || 'ventas');
+    }
+
+    // 5. FAB
+    if (document.getElementById('cartFab')) {
+        makeDraggable('cartFab', STORAGE_KEYS.DRAG_POS);
+    }
+
+    // 6. Escáner
+    if (typeof Escaner !== 'undefined') {
+        Escaner.iniciar((codigo) => {
+            manejarEscaneo(codigo);
+        });
+    }
+    
+    if (typeof BuscadorUI !== 'undefined') {
+        setTimeout(() => BuscadorUI.init(), 500);
+    }
+
+     // 🆕 Filtrar accesos rápidos según el rol
+    filtrarAccesosRapidosPorRol();
+
+  // 🆕 Renderizar accesos rápidos dinámicos
+    setTimeout(() => renderAccesosRapidos(), 300);
+
+    console.log('✅ App.js cargado correctamente');
+});

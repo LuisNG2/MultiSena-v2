@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MultiVentas POS</string>
+    <string name="title_activity_main">MultiVentas POS</string>
+    <string name="package_name">com.multiventas.pos</string>
+    <string name="custom_url_scheme">com.multiventas.pos</string>
+</resources>
