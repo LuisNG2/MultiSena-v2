@@ -291,8 +291,7 @@ const Buscador = (() => {
 
         return mejor;
     }
-
-    /* =========================================================
+        /* =========================================================
      * 6. BÚSQUEDA PRINCIPAL
      * ========================================================= */
 
@@ -318,7 +317,7 @@ const Buscador = (() => {
         for (const item of items) {
             // Preparar campos en formato esperado
             const campos = {
-                nombre: item.nombre || '',
+                nombre: item.nombre || item.texto || '',
                 sku: item.sku || '',
                 categoria: item.categoria || '',
                 extra: item.extra || ''
@@ -351,20 +350,9 @@ const Buscador = (() => {
 
             // Bonus por popularidad (más vendidos primero)
             scoreTotal = aplicarBonusPopularidad(scoreTotal, item.vecesVendido || 0);
-            
-            if (scoreTotal >= minScore) {
-                resultados.push({
-                    ...item,
-                    _score: scoreTotal,
-                    _coincidencias: coincidencias
-                });
-            }
 
             // Penalización leve por textos largos (preferir matches concisos)
             scoreTotal -= nombreNorm.length * 0.1;
-
-            // 🆕 Bonus por popularidad (más vendidos primero)
-            scoreTotal = aplicarBonusPopularidad(scoreTotal, item.vecesVendido || 0);
 
             if (scoreTotal >= minScore) {
                 resultados.push({
@@ -411,7 +399,7 @@ const Buscador = (() => {
         };
     }
 
-        /* =========================================================
+    /* =========================================================
      * 8. RESALTADO DE COINCIDENCIAS
      * ========================================================= */
 
@@ -486,7 +474,8 @@ const Buscador = (() => {
         div.textContent = texto == null ? '' : String(texto);
         return div.innerHTML;
     }
-        /* =========================================================
+
+    /* =========================================================
      * 9. DETECCIÓN DE CANTIDAD EN EL QUERY
      * ========================================================= */
 
@@ -576,7 +565,8 @@ const Buscador = (() => {
     /* =========================================================
      * API PÚBLICA
      * ========================================================= */
-        return {
+
+    return {
         // Utilidades
         normalizar,
         tokenizar,
@@ -595,7 +585,7 @@ const Buscador = (() => {
         calcularRangosMatch,
         resaltar,
 
-        // 🆕 Nuevas features
+        // Nuevas features
         extraerCantidad,
         aplicarBonusPopularidad,
 
@@ -603,5 +593,5 @@ const Buscador = (() => {
         PESO_CAMPO,
         PESO_MATCH
     };
-   
+
 })();

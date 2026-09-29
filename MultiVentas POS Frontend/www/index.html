@@ -398,21 +398,24 @@
       <div id="resumenInventario" class="resumen-grid"></div>
 
         <div class="acciones-clientes">
-            <button class="btn" id="btnNuevoProducto">➕ Nuevo Producto</button>
-            <button class="btn ghost" id="btnImportarProductos">📥 Importar masivo</button>
+          <div class="acciones-buscador">
+              <div class="buscador-universal">
+                  <input type="text"
+                        id="buscarProducto"
+                        data-buscador
+                        data-tabla="tablaProductos"
+                        data-contador="contadorProductos"
+                        placeholder="Buscar por nombre, código o categoría...">
+                  <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+              </div>
+              <span class="buscador-contador" id="contadorProductos"></span>
+          </div>
 
-            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
-                <input type="text"
-                    id="buscarProducto"
-                    placeholder="🔍 Buscar producto... (/)"
-                    data-buscador
-                    data-tabla="tablaProductos">
-              <span id="contadorProductos" class="buscador-contador"></span>
-                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
-            </div>
-
-            <span class="buscador-contador" id="contadorProductos"></span>
-        </div>
+          <div class="acciones-botones">
+              <button class="btn" id="btnNuevoProducto">➕ Nuevo Producto</button>
+              <button class="btn ghost" id="btnImportarProductos">📥 Importar masivo</button>
+          </div>
+      </div>
       <table class="tabla-carrito" id="tablaProductos">
         <thead>
           <tr>
@@ -434,20 +437,23 @@
     <div class="panel">
       <h2>🏷️ Gestión de Categorías</h2>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-            <button class="btn" id="btnNuevaCategoria">➕ Nueva Categoría</button>
-
-            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
-                <input type="text"
-                      id="buscarCategoria"
-                      placeholder="🔍 Buscar categoría... (/)"
-                      data-buscador
-                      data-tabla="tablaCategorias">
-                <span id="contadorCategorias" class="buscador-contador"></span>
-                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+        <div class="acciones-clientes">
+            <div class="acciones-buscador">
+                <div class="buscador-universal">
+                    <input type="text"
+                          id="buscarCategoria"
+                          data-buscador
+                          data-tabla="tablaCategorias"
+                          data-contador="contadorCategorias"
+                          placeholder="Buscar categoría por nombre...">
+                    <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+                </div>
+                <span class="buscador-contador" id="contadorCategorias"></span>
             </div>
 
-            <span class="buscador-contador" id="contadorCategorias"></span>
+            <div class="acciones-botones">
+                <button class="btn" id="btnNuevaCategoria">➕ Nueva Categoría</button>
+            </div>
         </div>
 
       <table class="tabla-carrito" id="tablaCategorias">
@@ -473,22 +479,24 @@
       <h2>Gestión de Clientes</h2>
 
       <div id="resumenClientes" class="resumen-grid"></div>
+        <div class="acciones-clientes">
+            <div class="acciones-buscador">
+                <div class="buscador-universal">
+                    <input type="text"
+                          id="buscarCliente"
+                          data-buscador
+                          data-tabla="tablaClientes"
+                          data-contador="contadorClientes"
+                          placeholder="Buscar cliente por nombre, correo o ciudad...">
+                    <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+                </div>
+                <span class="buscador-contador" id="contadorClientes"></span>
+            </div>
 
-      <div class="acciones-clientes">
-          <button class="btn" id="btnNuevoCliente">➕ Nuevo Cliente</button>
-
-          <div class="buscador-universal" style="flex: 1; max-width: 420px;">
-              <input type="text"
-                  id="buscarCliente"
-                  placeholder="🔍 Buscar cliente... (/)"
-                  data-buscador
-                  data-tabla="tablaClientes">
-            <span id="contadorClientes" class="buscador-contador"></span>
-              <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
-          </div>
-
-          <span class="buscador-contador" id="contadorClientes"></span>
-      </div>
+            <div class="acciones-botones">
+                <button class="btn" id="btnNuevoCliente">➕ Nuevo Cliente</button>
+            </div>
+        </div>
 
       <table class="tabla-carrito" id="tablaClientes">
         <thead>
@@ -527,21 +535,23 @@
         <div id="resumenUsuarios" class="resumen-grid"></div>
 
         <div class="acciones-clientes">
-            <button class="btn" id="btnNuevoUsuario">➕ Nuevo Usuario</button>
-
-            <div class="buscador-universal" style="flex: 1; max-width: 420px;">
-                <input type="text"
-                      id="buscarUsuario"
-                      data-buscador
-                      data-tabla="tablaUsuarios" 
-                      data-contador="contadorUsuarios"
-                      placeholder="Buscar usuario por nombre, correo o rol...">
-                <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+            <div class="acciones-buscador">
+                <div class="buscador-universal">
+                    <input type="text"
+                          id="buscarUsuario"
+                          data-buscador
+                          data-tabla="tablaUsuarios"
+                          data-contador="contadorUsuarios"
+                          placeholder="Buscar usuario por nombre, correo o rol...">
+                    <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
+                </div>
+                <span class="buscador-contador" id="contadorUsuarios"></span>
             </div>
 
-            <span class="buscador-contador" id="contadorUsuarios"></span>
+            <div class="acciones-botones">
+                <button class="btn" id="btnNuevoUsuario">➕ Nuevo Usuario</button>
+            </div>
         </div>
-
         <table class="tabla-carrito" id="tablaUsuarios">
             <thead>
                 <tr>

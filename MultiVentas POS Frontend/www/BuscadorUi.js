@@ -16,10 +16,11 @@
 //   - Navegación con flechas
 //   - Debounce + cancelación
 //   - Botón clear contextual
-//   - 🆕 Búsqueda predictiva con Enter
-//   - 🆕 Cantidad automática ("arroz 3")
-//   - 🆕 Teclas numéricas 1-5
-//   - 🆕 Deduplicación de resultados
+//   - Búsqueda predictiva con Enter
+//   - Cantidad automática ("arroz 3", "3 arroz", "arroz*3")
+//   - Detección de lector de código de barras
+//   - Deduplicación de resultados
+//   - 🚫 SIN atajos de teclas 1-5 (eliminados por bugs)
 // ============================================================
 
 const BuscadorUI = (() => {
@@ -233,14 +234,12 @@ const BuscadorUI = (() => {
 
             const elementos = obtenerElementos();
 
-            // 🆕 Deduplicar elementos por id_producto / sku
-            // (evita que el mismo producto aparezca 2 veces si el HTML tiene clones)
+            // Deduplicar elementos por id_producto / sku
             const elementosUnicos = [];
             const vistos = new Set();
             elementos.forEach(el => {
                 const key = el.dataset.idProducto || el.dataset.id || el.dataset.sku;
                 if (key && vistos.has(key)) {
-                    // Es un duplicado → eliminarlo del DOM
                     el.remove();
                     return;
                 }
@@ -248,7 +247,7 @@ const BuscadorUI = (() => {
                 elementosUnicos.push(el);
             });
 
-            // 🆕 Construir items deduplicados por id_producto
+            // Construir items deduplicados por id_producto
             const itemsMap = new Map();
             elementosUnicos.forEach(el => {
                 const idProducto = el.dataset.idProducto || el.dataset.id;
@@ -272,15 +271,18 @@ const BuscadorUI = (() => {
                 );
             }
 
-            // Búsqueda
+            // Búsqueda (extrayendo cantidad del query si aplica)
             let encontrados;
             if (q) {
-                encontrados = Buscador.buscar(q, itemsFiltrados, { minScore: 25 });
+                const { query: queryLimpio } = (typeof Buscador.extraerCantidad === 'function')
+                    ? Buscador.extraerCantidad(q)
+                    : { query: q };
+                encontrados = Buscador.buscar(queryLimpio || q, itemsFiltrados, { minScore: 25 });
             } else {
                 encontrados = itemsFiltrados.map(i => ({ ...i, _score: 0, _coincidencias: [] }));
             }
 
-            // 🆕 Deduplicar los resultados finales por _el
+            // Deduplicar los resultados finales por _el
             const encontradosUnicos = [];
             const elementosVistos = new Set();
             encontrados.forEach(item => {
@@ -291,7 +293,7 @@ const BuscadorUI = (() => {
             });
             encontrados = encontradosUnicos;
 
-            // Exponer resultados para Enter y teclas numéricas
+            // Exponer resultados para Enter
             input._ultimosEncontrados = encontrados;
 
             const encontradosMap = new Map(encontrados.map(e => [e._el, e]));
@@ -468,8 +470,7 @@ const BuscadorUI = (() => {
         document.addEventListener('click', (e) => {
             if (!input.parentElement.contains(e.target)) ocultarSugerencias();
         });
-
-        /* ============================================
+                /* ============================================
          * ACCIÓN DE ESCANEO
          * ============================================ */
 
@@ -516,82 +517,115 @@ const BuscadorUI = (() => {
          * AGREGAR AL CARRITO (búsqueda predictiva)
          * ============================================ */
 
-        function agregarPrimeroAlCarrito(encontrados, input) {
+        function agregarPrimeroAlCarrito(encontrados) {
             if (!encontrados || encontrados.length === 0) return;
+            agregarItemAlCarrito(encontrados[0], input.value);
+        }
 
-            const primero = encontrados[0];
-            const elemento = primero._el;
+                /**
+         * Agrega un item al carrito SUMANDO cantidades si ya existe.
+         * Respeta el stock disponible y muestra UN SOLO toast.
+         */
+        function agregarItemAlCarrito(item, textoQuery) {
+            if (!item || !item._el) return;
 
-            if (!elemento) return;
+            const elemento = item._el;
+            const btnAgregar = elemento.querySelector('.agregar');
 
-            const { cantidad } = (typeof Buscador.extraerCantidad === 'function')
-                ? Buscador.extraerCantidad(input.value)
+            if (!btnAgregar || btnAgregar.disabled) {
+                if (typeof toast === 'function') {
+                    toast(`"${item.nombre}" sin stock`, 'error');
+                }
+                return;
+            }
+
+            // Extraer cantidad del query (ej: "20 arr" → 20)
+            const { cantidad: cantidadSolicitada } = (typeof Buscador.extraerCantidad === 'function')
+                ? Buscador.extraerCantidad(textoQuery || input.value)
                 : { cantidad: 1 };
 
-            const btnAgregar = elemento.querySelector('.agregar');
-            if (btnAgregar && !btnAgregar.disabled) {
-                for (let i = 0; i < cantidad; i++) {
-                    btnAgregar.click();
-                }
+            const ventaId = estado.pestañaActiva || 'venta1';
+            const sku = elemento.dataset.sku;
+            const stock = parseInt(elemento.dataset.stock || '0', 10);
+            const nombre = item.nombre || 'Producto';
 
+            if (!sku || !estado.carritos[ventaId]) return;
+
+            // 🔍 Ver si ya está en el carrito
+            const itemCarrito = estado.carritos[ventaId].find(i => i.sku === sku);
+            const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
+
+            // 🧮 Calcular cuánto se puede agregar realmente
+            const espacioDisponible = stock - cantidadActual;
+            const cantidadFinal = Math.min(cantidadSolicitada, espacioDisponible);
+
+            // Casos de error
+            if (espacioDisponible <= 0) {
                 if (typeof toast === 'function') {
-                    const nombre = primero.nombre || 'Producto';
-                    if (cantidad > 1) {
-                        toast(`✅ ${cantidad}× "${nombre}" agregado`);
+                    toast(`"${nombre}" ya tiene todo el stock en el carrito (${stock})`, 'error');
+                }
+                input.value = '';
+                aplicar('');
+                input.focus();
+                return;
+            }
+
+            const recortado = cantidadFinal < cantidadSolicitada;
+
+            // 🆕 Agregar con la lógica nativa del carrito
+            if (itemCarrito) {
+                // SUMAR a la cantidad existente
+                itemCarrito.cantidad += cantidadFinal;
+            } else {
+                // Crear nuevo item
+                const idProducto = parseInt(elemento.dataset.idProducto, 10);
+                const precio = parseFloat(elemento.dataset.precio) || 0;
+
+                estado.carritos[ventaId].push({
+                    idProducto,
+                    sku,
+                    nombre,
+                    precio,
+                    cantidad: cantidadFinal,
+                    stock: stock
+                });
+            }
+
+            // Refrescar UI
+            if (typeof renderCarrito === 'function') renderCarrito(ventaId);
+            if (typeof guardarEstado === 'function') guardarEstado();
+            if (typeof actualizarConteos === 'function') actualizarConteos();
+
+            // 🔔 UN SOLO toast
+            if (typeof toast === 'function') {
+                const total = cantidadActual + cantidadFinal;
+
+                if (recortado) {
+                    toast(`⚠️ "${nombre}" — stock máximo alcanzado (${stock}). Total en carrito: ${total}`, 'error');
+                } else if (cantidadFinal > 1) {
+                    if (cantidadActual > 0) {
+                        toast(`✅ +${cantidadFinal}× "${nombre}" (total: ${total})`);
+                    } else {
+                        toast(`✅ ${cantidadFinal}× "${nombre}" agregado`);
+                    }
+                } else {
+                    if (cantidadActual > 0) {
+                        toast(`✅ +1 "${nombre}" (total: ${total})`);
                     } else {
                         toast(`✅ "${nombre}" agregado`);
                     }
                 }
-
-                const fila = elemento.querySelector('tr') || elemento.closest('tr');
-                if (fila) {
-                    fila.classList.add('flash-agregado');
-                    setTimeout(() => fila.classList.remove('flash-agregado'), 900);
-                }
-
-                input.value = '';
-                aplicar('');
-                input.focus();
-            } else {
-                if (typeof toast === 'function') {
-                    toast(`"${primero.nombre}" sin stock o no disponible`, 'error');
-                }
             }
-        }
 
-        function agregarProductoPorIndice(encontrados, indice, input) {
-            if (!encontrados || indice < 0 || indice >= encontrados.length) return;
+            // Flash visual
+            const fila = elemento.closest('tr') || elemento;
+            fila.classList.add('flash-agregado');
+            setTimeout(() => fila.classList.remove('flash-agregado'), 900);
 
-            const item = encontrados[indice];
-            const elemento = item._el;
-
-            if (!elemento) return;
-
-            const { cantidad } = (typeof Buscador.extraerCantidad === 'function')
-                ? Buscador.extraerCantidad(input.value)
-                : { cantidad: 1 };
-
-            const btnAgregar = elemento.querySelector('.agregar');
-            if (btnAgregar && !btnAgregar.disabled) {
-                for (let i = 0; i < cantidad; i++) {
-                    btnAgregar.click();
-                }
-
-                if (typeof toast === 'function') {
-                    toast(`✅ ${item.nombre} agregado (${indice + 1})`);
-                }
-
-                elemento.classList.add('buscador-destacado');
-                setTimeout(() => elemento.classList.remove('buscador-destacado'), 1500);
-
-                input.value = '';
-                aplicar('');
-                input.focus();
-            } else {
-                if (typeof toast === 'function') {
-                    toast(`"${item.nombre}" sin stock`, 'error');
-                }
-            }
+            // Limpiar input
+            input.value = '';
+            aplicar('');
+            input.focus();
         }
 
         /* ============================================
@@ -624,6 +658,7 @@ const BuscadorUI = (() => {
             const diff = ahora - ultimaTecla;
             ultimaTecla = ahora;
 
+            // Detectar tecleo rápido (lector de código de barras)
             if (diff < VELOCIDAD_LECTOR_MS && diff > 0) {
                 tecleandoRapido = true;
             }
@@ -632,7 +667,9 @@ const BuscadorUI = (() => {
                 tecleandoRapido = false;
             }, 500);
 
+            // ============================================================
             // ENTER
+            // ============================================================
             if (e.key === 'Enter') {
                 const sugerenciaActiva = sugerenciasPanel.querySelector('.sugerencia-item.active');
 
@@ -652,7 +689,7 @@ const BuscadorUI = (() => {
                 const encontrados = input._ultimosEncontrados || [];
                 if (encontrados.length > 0) {
                     e.preventDefault();
-                    agregarPrimeroAlCarrito(encontrados, input);
+                    agregarPrimeroAlCarrito(encontrados);
                     return;
                 }
 
@@ -660,38 +697,35 @@ const BuscadorUI = (() => {
                 return;
             }
 
-            // TECLAS NUMÉRICAS 1-5
-            if (['1', '2', '3', '4', '5'].includes(e.key)) {
+            // ============================================================
+            // ATAJOS NUMÉRICOS 1-5 (solo si el input NO termina en número)
+            // ============================================================
+                        // ============================================================
+            // ATAJOS NUMÉRICOS 1-5 (solo si el input NO termina en número)
+            // ============================================================
+            if (['1', '2', '3', '4', '5'].includes(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                const valorActual = input.value;
+
+                // 🚫 NO disparar si el input termina en número (evita conflicto con "arr 5")
+                const terminaEnNumero = /\d\s*$/.test(valorActual);
+                if (terminaEnNumero) {
+                    return;   // Dejar pasar la tecla normalmente
+                }
+
                 const encontrados = input._ultimosEncontrados || [];
                 const sugerenciasVisibles = sugerenciasPanel.style.display === 'block';
+                const indice = parseInt(e.key, 10) - 1;
 
-                if (e.ctrlKey && encontrados.length >= parseInt(e.key, 10)) {
+                if (encontrados.length > indice && sugerenciasVisibles) {
                     e.preventDefault();
-                    const indice = parseInt(e.key, 10) - 1;
-                    agregarProductoPorIndice(encontrados, indice, input);
-                    return;
-                }
-
-                if (encontrados.length >= parseInt(e.key, 10) && sugerenciasVisibles) {
-                    const valorActual = input.value;
-                    const patronCantidadFinal = /\s+\d*$/;
-                    if (patronCantidadFinal.test(valorActual)) return;
-
-                    e.preventDefault();
-                    const indice = parseInt(e.key, 10) - 1;
-                    agregarProductoPorIndice(encontrados, indice, input);
-                    return;
-                }
-
-                if (encontrados.length >= parseInt(e.key, 10) && input.value === '') {
-                    e.preventDefault();
-                    const indice = parseInt(e.key, 10) - 1;
-                    agregarProductoPorIndice(encontrados, indice, input);
+                    agregarItemAlCarrito(encontrados[indice], input.value);
                     return;
                 }
             }
 
+            // ============================================================
             // ESCAPE
+            // ============================================================
             if (e.key === 'Escape') {
                 input.value = '';
                 aplicar('');
@@ -703,7 +737,9 @@ const BuscadorUI = (() => {
                 return;
             }
 
-            // FLECHAS
+            // ============================================================
+            // FLECHAS (navegación en sugerencias)
+            // ============================================================
             if (sugerenciasPanel.style.display === 'block') {
                 const items = sugerenciasPanel.querySelectorAll('.sugerencia-item');
                 if (items.length === 0) return;
@@ -731,7 +767,9 @@ const BuscadorUI = (() => {
             }
         });
 
-        // FOCUS: historial
+        // ============================================================
+        // FOCUS: mostrar historial de búsquedas
+        // ============================================================
         input.addEventListener('focus', () => {
             if (input.value) return;
 
@@ -760,7 +798,9 @@ const BuscadorUI = (() => {
             });
         });
 
+        // ============================================================
         // BOTÓN CLEAR
+        // ============================================================
         if (clearBtn && !clearBtn._attached) {
             clearBtn._attached = true;
             clearBtn.addEventListener('click', () => {
@@ -777,7 +817,9 @@ const BuscadorUI = (() => {
         input.addEventListener('input', toggleClear);
         toggleClear();
 
-        // OBSERVER
+        // ============================================================
+        // OBSERVER: detectar cambios en la tabla (por CRUD)
+        // ============================================================
         let mutacionTimeout = null;
         const observer = new MutationObserver(() => {
             if (aplicandoFiltro) return;
@@ -797,7 +839,9 @@ const BuscadorUI = (() => {
 
         registrados.set(input, { contenedor, observer, input });
 
+        // ============================================================
         // API PÚBLICA
+        // ============================================================
         input._buscadorAPI = {
             refresh: () => {
                 elementosContados = 0;
