@@ -1,11 +1,21 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <title>POS MultiVentas</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>POS MultiVentas</title>
+
+    <!-- Favicon principal: logo SVG -->
+    <link rel="icon" type="image/svg+xml" href="assets/multiventas-logo.svg">
+
+    <!-- Fallback: emoji SVG si el navegador no soporta SVG favicon -->
+    <link rel="alternate icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+
+    <!-- Preload del logo -->
+    <link rel="preload" as="image" href="assets/multiventas-logo.svg" type="image/svg+xml">
+
+    <!-- Estilos -->
+    <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
@@ -74,10 +84,11 @@
      HEADER
      ============================================================ -->
 <header class="header-multiventas">
-  <div class="header-left">
-    <button id="btnMenu" class="hamburger" title="Abrir menú">☰</button>
-    <p id="titulo-vista" class="titulo-vista">Selecciona una vista</p>
-  </div>
+      <div class="header-left">
+          <button id="btnMenu" class="hamburger" title="Abrir menú">☰</button>
+          <button id="btnFixSidebar" class="fix-btn-header" title="Fijar menú lateral">📌</button>
+          <p id="titulo-vista" class="titulo-vista">Selecciona una vista</p>
+      </div>
 
   <div class="header-right">
     <div id="estadoConexion" class="estado-conexion">🟢 Conectado</div>
@@ -95,10 +106,12 @@
 <!-- ============================================================
      SIDEBAR
      ============================================================ --><aside class="sidebar expanded" id="sidebar" aria-label="Barra lateral">
-  <div class="sidebar-top">
-    <h3 class="logo">MultiVentas</h3>
-    <button id="btnFixSidebar" class="fix-btn" title="Fijar menú">📌</button>
-  </div>
+    <div class="sidebar-top">
+        <div class="sidebar-brand">
+            <img src="assets/multiventas-logo.svg" alt="MultiVentas" class="logo-img">
+            <span class="logo-text">MultiVentas</span>
+        </div>
+    </div>
   <div class="sidebar-quick-actions"></div>   
   <div class="sidebar-scroll">
     <nav>

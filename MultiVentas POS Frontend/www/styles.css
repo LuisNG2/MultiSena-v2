@@ -16,7 +16,7 @@ html, body { height: 100%; }
     --color-exito: #16a34a;
     --color-advertencia: #f59e0b;
     
-    --header-height: 56px;  
+    --header-height: 48px;  
     --sidebar-width: 220px;
     
     /* Modo claro */
@@ -65,14 +65,14 @@ main { grid-area: main; padding: 8px; }
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    padding: 0 12px;
+    padding: 0 16px;
     height: var(--header-height);
     background: linear-gradient(to right, #2563eb, #1e40af);
     color: #fff;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
     position: sticky;
     top: 0;
-    z-index: 1000;
+    z-index: 1100;   /* 👈 MAYOR que el sidebar (999) */
     animation: fadeInHeader 0.4s ease-out;
 }
 
@@ -142,20 +142,20 @@ main { grid-area: main; padding: 8px; }
    3. SIDEBAR (Estructura base, modos dinámicos y navegación activa)
    ============================================================ */
 .sidebar {
-    grid-area: sidebar;
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    height: calc(100vh - var(--header-height));
     width: var(--sidebar-width);
     background: #0f2635;
     color: #fff;
-    padding: 8px 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    transition: width 0.3s ease, transform 0.3s ease;
+    padding: 8px;                    /* 👈 antes: 12px */
+    z-index: 999;
     overflow: hidden;
+    transition: width 0.3s ease, transform 0.3s ease;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.12);
-    position: relative;
+    box-sizing: border-box;
 }
-
 .sidebar-top {
     display: flex;
     justify-content: space-between;
@@ -250,9 +250,8 @@ main { grid-area: main; padding: 8px; }
 .sidebar.modo-auto:hover {
     width: var(--sidebar-width);
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.25);
-    z-index: 1100;
+    z-index: 999;   
 }
-
 /* Ocultar textos cuando está colapsado */
 .sidebar.modo-auto:not(:hover) .text,
 .sidebar.modo-auto:not(:hover) .logo,
@@ -292,42 +291,61 @@ main { grid-area: main; padding: 8px; }
     display: none;
 }
 
-/* Botón pin sidebar */
-#btnFixSidebar {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-    font-size: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    cursor: pointer;
-    z-index: 1400;
+/* ============================================================
+   PIN DE FIJAR SIDEBAR (en el header azul)
+   ============================================================ */
+.fix-btn-header {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
     transition: all 0.2s ease;
     padding: 0;
-}
-#btnFixSidebar:hover {
-    background: var(--color-primario);
-    border-color: var(--color-primario);
-    transform: scale(1.1);
-}
-.sidebar.modo-auto #btnFixSidebar { opacity: 0.6; }
-.sidebar.modo-auto #btnFixSidebar:hover { opacity: 1; }
-.sidebar.modo-fijo #btnFixSidebar {
-    background: var(--color-primario);
-    border-color: var(--color-primario);
-    opacity: 1;
+    flex-shrink: 0;
 }
 
-.sidebar.modo-auto:not(:hover) .sidebar-top { padding-top: 34px; }
-.sidebar.modo-auto:not(:hover) .logo { display: none; }
-.sidebar.modo-fijo .sidebar-top { padding-top: 34px; }
+.fix-btn-header:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.08);
+}
+
+.fix-btn-header:active {
+    transform: scale(0.95);
+}
+
+/* Cuando el sidebar está fijo, el pin se ve resaltado */
+.fix-btn-header.activo {
+    background: #22c55e;
+    border-color: #22c55e;
+}
+
+/* Ocultar el botón hamburguesa cuando el pin está presente en desktop */
+@media (min-width: 901px) {
+    .fix-btn-header {
+        display: inline-flex;
+    }
+}
+
+/* En móvil: ocultar el pin y mostrar solo el hamburger */
+@media (max-width: 900px) {
+    .sidebar {
+        top: var(--header-height);                     /* mantiene el top */
+        height: calc(100vh - var(--header-height));
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        z-index: 999;
+    }
+    .sidebar.active {
+        transform: translateX(0);
+    }
+}
 
 /* Resaltado del menú activo */
 .sidebar .submenu [data-vista].active {
@@ -1743,17 +1761,27 @@ border-left-color: #3b82f6;
     }
 
     /* 2. Base del Sidebar en Móvil (Alineación perfecta por debajo del header) */
+   /* ============================================================
+   SIDEBAR — Position fixed debajo del header
+   ============================================================ */
     .sidebar {
+        grid-area: sidebar;
         position: fixed;
-        top: var(--header-height);
+        top: var(--header-height);                          /* 👈 EMPIEZA DEBAJO DEL HEADER */
         left: 0;
-        height: calc(100vh - var(--header-height));
-        width: 60px;
-        transform: translateX(0);
-        transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-        z-index: 999;
-        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.2);
-        padding: 8px 4px;
+        height: calc(100vh - var(--header-height));         /* 👈 ALTURA RESTANTE */
+        width: var(--sidebar-width);
+        background: #0f2635;
+        color: #fff;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        transition: width 0.3s ease, transform 0.3s ease;
+        overflow: hidden;
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.12);
+        z-index: 999;                                        /* 👈 MENOR que el header (1100) */
+        box-sizing: border-box;
     }
 
     /* Estado expandido */
@@ -1901,8 +1929,17 @@ transition: transform .25s ease; z-index: 260;
 }
 /* Asegurar anclaje fijo del Sidebar en Escritorio */
 @media (min-width: 900px) {
-.sidebar { position: static; transform: none !important; width: var(--sidebar-width); box-shadow: none; }
-.sidebar-scroll { max-height: calc(100vh - var(--header-height)); }
+    /* En desktop, el sidebar vuelve al flujo del grid */
+    .sidebar {
+        position: sticky;
+        top: var(--header-height);
+        height: calc(100vh - var(--header-height));
+        transform: none !important;
+        box-shadow: none;
+    }
+    .sidebar-scroll {
+        max-height: calc(100vh - var(--header-height) - 80px);  /* 80px = header interno del sidebar */
+    }
 }
 /* ============================================================
    OPTIMIZACIÓN DE VISTAS INTERNAS PARA MÓVIL (Dashboard e Historial)
@@ -2195,3 +2232,133 @@ transition: transform .25s ease; z-index: 260;
         min-height: 32px;
     }
 }
+
+/* ============================================================
+   SIDEBAR: Header con logo + texto
+   ============================================================ */
+
+.sidebar-top {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;                          /* 👈 antes: 6px */
+    padding: 6px 0;                  /* 👈 antes: 8px 6px — quita padding lateral */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: 48px;
+    box-sizing: border-box;
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+}
+/* Botón pin siempre a la izquierda */
+.sidebar-top #btnFixSidebar {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    padding: 0;
+    position: static;
+}
+
+.sidebar-top #btnFixSidebar:hover {
+    background: var(--color-primario);
+    border-color: var(--color-primario);
+    transform: scale(1.1);
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;                          /* 👈 antes: 8px */
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0;                      /* 👈 por si acaso */
+    margin: 0;
+}
+
+/* El logo */
+.sidebar-top .logo-img {
+    width: 40px;                     /* 👈 tamaño real que quieres */
+    height: 40px;
+    max-width: 100%;                 /* 👈 no desbordar el padre */
+    flex-shrink: 0;
+    display: block;
+    color: #ffffff;
+    object-fit: contain;
+    transition: width 0.25s ease, height 0.25s ease;
+}
+/* El texto */
+.sidebar-top .logo-text {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+}
+
+/* Modo auto COLAPSADO: solo se ve el logo (sin texto) */
+.sidebar.modo-auto:not(:hover) .sidebar-top .logo-text {
+    opacity: 0;
+    width: 0;
+    overflow: hidden;
+}
+
+/* Modo auto COLAPSADO: el pin se oculta o se achica */
+.sidebar.modo-auto:not(:hover) .sidebar-top #btnFixSidebar {
+    width: 22px;
+    height: 22px;
+    font-size: 10px;
+}
+
+/* Modo auto COLAPSADO: solo se ve el logo */
+.sidebar.modo-auto:not(:hover) .sidebar-brand {
+    justify-content: center;
+}
+
+/* Modo auto EXPANDIDO (hover) o FIJO: todo se ve */
+.sidebar.modo-auto:hover .sidebar-top .logo-img,
+.sidebar.modo-fijo .sidebar-top .logo-img {
+    max-width: 34px;
+    max-height: 34px;
+}
+
+.sidebar.modo-auto:hover .sidebar-top .logo-text,
+.sidebar.modo-fijo .sidebar-top .logo-text {
+    opacity: 1;
+    width: auto;
+}
+/* Logo en el sidebar */
+.sidebar-top .logo-img {
+    width: 100%;
+    height: 100%;
+    max-width: 25px;
+    max-height: 25px;
+    object-fit: contain;      /* 👈 mantiene la proporción */
+    object-position: center;   /* 👈 centrado */
+    flex-shrink: 0;
+    display: block;
+    filter: brightness(0) invert(1);  /* blanco sobre fondo oscuro */
+    transition: max-width 0.25s ease, max-height 0.25s ease;
+}
+
+/* Cuando el sidebar está colapsado */
+.sidebar.modo-auto:not(:hover) .sidebar-top .logo-img {
+    max-width: 38px;
+    max-height: 38px;
+}
+

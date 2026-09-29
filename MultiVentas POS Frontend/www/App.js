@@ -2856,13 +2856,15 @@ function setupSidebar() {
             if (modo === 'fijo') {
                 btnFix.textContent = '📌';
                 btnFix.title = 'Desfijar (sidebar se colapsa al salir el mouse)';
+                btnFix.classList.add('activo');      // 🆕
             } else {
                 btnFix.textContent = '📍';
                 btnFix.title = 'Fijar sidebar expandido';
+                btnFix.classList.remove('activo');   // 🆕
             }
         }
     }
-
+    
     if (btnFix && !btnFix._listenerAttached) {
         btnFix._listenerAttached = true;
         btnFix.addEventListener('click', (e) => {
