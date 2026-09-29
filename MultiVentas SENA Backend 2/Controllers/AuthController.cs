@@ -99,9 +99,9 @@ namespace MultiVentasPOS.Controllers
 
             var usuario = new Usuario
             {
-                Nombre = req.Nombre,
-                Correo = req.Correo,
-                ContrasenaHash = HashPassword(req.Password),
+                Nombre = req.Nombre ?? string.Empty,
+                Correo = req.Correo ?? string.Empty,
+                ContrasenaHash = HashPassword(req.Password ?? string.Empty),
                 IdRol = req.IdRol,
                 Estado = estadoFinal,
                 FechaCreacion = DateTime.UtcNow,
@@ -136,7 +136,7 @@ namespace MultiVentasPOS.Controllers
                 if (user.Estado != "Activo")
                     return Unauthorized(new { message = "Usuario inactivo. Contacte al administrador." });
 
-                var hash = HashPassword(request.Password);
+                var hash = HashPassword(request.Password ?? string.Empty);
                 if (user.ContrasenaHash != hash)
                     return Unauthorized(new { message = "Credenciales inválidas" });
 

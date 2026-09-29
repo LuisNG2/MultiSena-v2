@@ -71,7 +71,7 @@ namespace MultiVentasPOS.Controllers
 
                 var categoria = new Categoria
                 {
-                    Nombre = req.Nombre.Trim(),
+                    Nombre = req.Nombre?.Trim() ?? string.Empty,
                     Descripcion = string.IsNullOrWhiteSpace(req.Descripcion) ? null : req.Descripcion.Trim()
                 };         
 
@@ -163,7 +163,7 @@ namespace MultiVentasPOS.Controllers
     public class CategoriaDto
     {
         public int IdCategoria { get; set; }
-        public string Nombre { get; set; }
+        public string? Nombre { get; set; }
         public string? Descripcion { get; set; }
     }
 
@@ -171,7 +171,7 @@ namespace MultiVentasPOS.Controllers
     {
         [System.ComponentModel.DataAnnotations.Required]
         [System.ComponentModel.DataAnnotations.StringLength(100)]
-        public string Nombre { get; set; }
+        public string? Nombre { get; set; }
 
         [System.ComponentModel.DataAnnotations.StringLength(500)]
         public string? Descripcion { get; set; }
@@ -180,7 +180,7 @@ namespace MultiVentasPOS.Controllers
     public class UpdateCategoriaRequest
     {
         [System.ComponentModel.DataAnnotations.StringLength(100)]
-        public string Nombre { get; set; }
+        public string? Nombre { get; set; }
 
         [System.ComponentModel.DataAnnotations.StringLength(500)]
         public string? Descripcion { get; set; }

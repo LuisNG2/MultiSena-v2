@@ -182,7 +182,7 @@ public async Task<IActionResult> ConfirmarProductos([FromForm] string modo, IFor
             // -------- ¿Existe el producto por código? --------
             var existe = productosExistentes.TryGetValue(fila.CodigoInterno, out var prodExistente);
 
-            if (existe)
+            if (existe && prodExistente is not null)
             {
                 // ========== ACTUALIZAR ==========
                 if (modo == "actualizar" || modo == "ambos")
