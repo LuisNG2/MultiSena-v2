@@ -490,58 +490,46 @@ const Buscador = (() => {
      *   "arroz x3"    → { query: "arroz", cantidad: 3 }
      *   "arroz"       → { query: "arroz", cantidad: 1 }
      */
+        /**
+     * Extrae la cantidad del query.
+     * 
+     * 📌 REGLA: La cantidad SOLO se interpreta si está AL INICIO del query.
+     * 
+     * Formatos soportados:
+     *   "5 coca"      → { query: "coca",     cantidad: 5 }
+     *   "3 arroz"     → { query: "arroz",    cantidad: 3 }
+     *   "10 pan"      → { query: "pan",      cantidad: 10 }
+     *   "2 leche 1L"  → { query: "leche 1L", cantidad: 2 }
+     *   "coca 1.5"    → { query: "coca 1.5", cantidad: 1 }  ← el número es parte del nombre
+     *   "arroz 5"     → { query: "arroz 5",  cantidad: 1 }  ← el número es parte del nombre
+     *   "coca cola"   → { query: "coca cola",cantidad: 1 }
+     * 
+     * ⚠️ Si el número está en medio o al final, se considera parte del nombre del producto.
+     */
     function extraerCantidad(query) {
         if (!query) return { query: '', cantidad: 1 };
 
         const texto = String(query).trim();
-        let cantidad = 1;
-        let queryLimpio = texto;
 
-        // Patrón 1: "arroz 3" o "arroz x3" o "arroz*3"
-        const patronFinal = /\s+(?:x\s*)?(\d{1,3})\s*$/i;
-        const matchFinal = texto.match(patronFinal);
-        if (matchFinal) {
-            const num = parseInt(matchFinal[1], 10);
-            if (num > 0 && num <= 999) {
-                cantidad = num;
-                queryLimpio = texto.substring(0, matchFinal.index).trim();
+        // Patrón: "N texto..." (número seguido de espacio y al menos un carácter)
+        // El número debe estar al inicio, separado por espacio
+        const patronInicio = /^(\d{1,3})\s+(.+)$/;
+
+        const match = texto.match(patronInicio);
+
+        if (match) {
+            const num = parseInt(match[1], 10);
+            const resto = match[2].trim();
+
+            // Validar rango razonable (1 a 999)
+            if (num > 0 && num <= 999 && resto.length > 0) {
+                return { query: resto, cantidad: num };
             }
         }
 
-        // Patrón 2: "3 arroz" o "3arroz"
-        if (cantidad === 1) {
-            const patronInicio = /^(\d{1,3})\s+(.+)$/i;
-            const matchInicio = texto.match(patronInicio);
-            if (matchInicio) {
-                const num = parseInt(matchInicio[1], 10);
-                if (num > 0 && num <= 999) {
-                    cantidad = num;
-                    queryLimpio = matchInicio[2].trim();
-                }
-            }
-        }
-
-        // Patrón 3: "arroz*3" (sin espacio)
-        if (cantidad === 1) {
-            const patronAsterisco = /^(.+?)\*(\d{1,3})$/i;
-            const matchAster = texto.match(patronAsterisco);
-            if (matchAster) {
-                const num = parseInt(matchAster[2], 10);
-                if (num > 0 && num <= 999) {
-                    cantidad = num;
-                    queryLimpio = matchAster[1].trim();
-                }
-            }
-        }
-
-        // Si quedó vacío, no es válido
-        if (!queryLimpio) {
-            return { query: texto, cantidad: 1 };
-        }
-
-        return { query: queryLimpio, cantidad };
+        // Sin cantidad: devolver el texto original
+        return { query: texto, cantidad: 1 };
     }
-
     /* =========================================================
      * 10. ORDENAR POR MÁS VENDIDOS (bonus de relevancia)
      * ========================================================= */

@@ -811,6 +811,42 @@ function setupBuscadorCatalogo() {
         card.classList.add('kbd-active');
         card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
+
+    // ============================================================
+    // 🆕 HINT VISUAL DEL BUSCADOR
+    // ============================================================
+    const hint = document.getElementById('buscadorHint');
+    const buscadorEl = document.getElementById('buscador');
+
+    if (hint && buscadorEl && !hint._attached) {
+        hint._attached = true;
+
+        // Ocultar al enfocar
+        buscadorEl.addEventListener('focus', () => {
+            hint.classList.add('oculto');
+        });
+
+        // Mostrar solo si está vacío al perder foco
+        buscadorEl.addEventListener('blur', () => {
+            if (buscadorEl.value.trim().length === 0) {
+                hint.classList.remove('oculto');
+            }
+        });
+
+        // Ocultar/mostrar según contenido
+        buscadorEl.addEventListener('input', () => {
+            if (buscadorEl.value.trim().length > 0) {
+                hint.classList.add('oculto');
+            } else {
+                hint.classList.remove('oculto');
+            }
+        });
+
+        // Ocultar al cargar si ya hay término de búsqueda guardado
+        if (buscadorEl.value.trim().length > 0) {
+            hint.classList.add('oculto');
+        }
+    }
 }
 
 function setupToggleVista() {
@@ -962,44 +998,101 @@ function numeroDesdeId(idVenta) {
    ============================================================ */
 
 function agregarProducto(idVenta, { idProducto, nombre, precio, sku, stock }) {
+    // ---------------------------------------------------------
+    // 1. Validaciones básicas
+    // ---------------------------------------------------------
+    if (!idVenta || !sku) {
+        console.warn('⚠️ agregarProducto: idVenta o sku faltantes');
+        return;
+    }
+
     const carrito = estado.carritos[idVenta] || (estado.carritos[idVenta] = []);
+    const skuNorm = String(sku).trim().toUpperCase();
 
-    // 🆕 Calcular stock disponible real (contando TODOS los carritos)
-    const reservado = stockReservadoEnCarritos(sku);
-    const stockTotalBD = stock || 0;
-    const disponible = Math.max(0, stockTotalBD - reservado);
+    // ---------------------------------------------------------
+    // 2. Determinar stock total en BD
+    //    Prioridad: parámetro stock > caché de productos > 0
+    // ---------------------------------------------------------
+    let stockTotalBD = parseInt(stock, 10) || 0;
 
-    const item = carrito.find(x => x.sku === sku);
-
-    if (item) {
-        // Ya está en este carrito
-        if (disponible <= 0) {
-            toast(`Stock insuficiente. Solo hay ${stockTotalBD} y ya están reservados.`, 'error');
-            return;
+    if (stockTotalBD <= 0) {
+        // Fallback: buscar en el caché de productos (estado.productos)
+        const productoCache = (estado.productos || []).find(p => {
+            const pSku = String(p.sku || p.codigoInterno || '').trim().toUpperCase();
+            return pSku === skuNorm;
+        });
+        if (productoCache && productoCache.stockActual != null) {
+            stockTotalBD = productoCache.stockActual;
         }
+    }
+
+    // ---------------------------------------------------------
+    // 3. Buscar el item en el carrito actual (normalizando SKUs)
+    // ---------------------------------------------------------
+    const item = carrito.find(x =>
+        String(x.sku || '').trim().toUpperCase() === skuNorm
+    );
+    const cantidadActual = item ? parseInt(item.cantidad, 10) || 0 : 0;
+
+    // ---------------------------------------------------------
+    // 4. Calcular cuánto está reservado en TODOS los carritos
+    // ---------------------------------------------------------
+    let reservadoTotal = 0;
+    for (const vid in estado.carritos) {
+        const c = estado.carritos[vid] || [];
+        for (const i of c) {
+            if (String(i.sku || '').trim().toUpperCase() === skuNorm) {
+                reservadoTotal += parseInt(i.cantidad, 10) || 0;
+            }
+        }
+    }
+
+    // Reservado en OTROS carritos (excluyendo este)
+    const reservadoOtros = reservadoTotal - cantidadActual;
+
+    // Espacio disponible para este carrito
+    const espacioDisponible = stockTotalBD - reservadoOtros;
+
+    // ---------------------------------------------------------
+    // 5. Validación: al menos 1 unidad debe caber
+    // ---------------------------------------------------------
+    if (espacioDisponible < 1) {
+        const detalle = reservadoOtros > 0
+            ? ` (${reservadoOtros} en otros carritos)`
+            : '';
+        toast(`"${nombre || 'Producto'}" sin stock disponible${detalle}`, 'error');
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // 6. Agregar o sumar
+    // ---------------------------------------------------------
+    if (item) {
+        // Ya existe en el carrito → sumar 1
         item.cantidad += 1;
     } else {
-        // Nuevo item en este carrito
-        if (disponible <= 0) {
-            toast(`Stock insuficiente. Solo hay ${stockTotalBD} y ya están reservados.`, 'error');
-            return;
-        }
+        // Crear nuevo item
         carrito.push({
-            idProducto,
-            sku,
-            nombre,
-            precio,
+            idProducto: parseInt(idProducto, 10) || 0,
+            sku: skuNorm,              // guardamos normalizado
+            nombre: nombre || 'Producto',
+            precio: parseFloat(precio) || 0,
             cantidad: 1,
-            stock: stockTotalBD   // stock total de la BD
+            stock: stockTotalBD
         });
     }
 
+    // ---------------------------------------------------------
+    // 7. Refrescar UI
+    // ---------------------------------------------------------
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
-    refrescarStockCatalogo();   // 🆕
-}
 
+    if (typeof refrescarStockCatalogo === 'function') {
+        refrescarStockCatalogo();
+    }
+}
 /* ==================== STOCK DINÁMICO ==================== */
 
 /**
@@ -1970,13 +2063,21 @@ async function initCategorias() {
 
     tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">Cargando...</td></tr>`;
 
-    const resp = await api.get('/Categorias');
-    if (!resp.ok) {
+    // 🆕 Cargar categorías Y productos en paralelo (para contar cuántos hay por categoría)
+    const [respCategorias, respProductos] = await Promise.all([
+        api.get('/Categorias'),
+        api.get('/Productos?page=1&pageSize=5000')   // Traer todos
+    ]);
+
+    if (!respCategorias.ok) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#dc2626;">Error al cargar categorías</td></tr>`;
         return;
     }
 
-    _categoriasCache = resp.data || [];
+    _categoriasCache = respCategorias.data || [];
+    // 🆕 Cache de productos para contar por categoría
+    window._productosCache = respProductos.ok ? (respProductos.data || []) : [];
+
     renderTablaCategorias();
     setupCategoriasListeners();
 }
@@ -1991,14 +2092,21 @@ function renderTablaCategorias() {
     }
 
     tbody.innerHTML = _categoriasCache.map(c => {
-        const cantidadProductos = (window._productosCache || []).filter(p => p.idCategoria === c.idCategoria).length;
+        // 🆕 Contar productos en esta categoría
+        const cantidadProductos = (window._productosCache || [])
+            .filter(p => p.idCategoria === c.idCategoria)
+            .length;
 
         return `
             <tr data-id="${c.idCategoria}">
                 <td>${c.idCategoria}</td>
                 <td><strong>${escapeHtml(c.nombre)}</strong></td>
                 <td>${escapeHtml(c.descripcion || '-')}</td>
-                <td style="text-align:center;">${cantidadProductos}</td>
+                <td style="text-align:center;">
+                    <span class="badge-count ${cantidadProductos === 0 ? 'zero' : ''}">
+                        ${cantidadProductos} ${cantidadProductos === 1 ? 'producto' : 'productos'}
+                    </span>
+                </td>
                 <td>
                     <div class="acciones">
                         <button class="btn-accion editar" data-accion="editar" data-id="${c.idCategoria}">
@@ -2013,7 +2121,7 @@ function renderTablaCategorias() {
         `;
     }).join('');
 
-    // 🆕 Refrescar el buscador
+     // 🆕 Refrescar el buscador
     const inputCat = document.getElementById('buscarCategoria');
     if (inputCat && inputCat._buscadorAPI) {
         inputCat._buscadorAPI.refresh();
@@ -2298,6 +2406,16 @@ async function abrirModalProducto(idProducto) {
     form.reset();
     _editandoProductoId = idProducto;
 
+    // Limpiar feedbacks
+    const feedbackCodigo = document.getElementById('prodCodigoFeedback');
+    const feedbackSku = document.getElementById('prodSkuFeedback');
+    if (feedbackCodigo) feedbackCodigo.style.display = 'none';
+    if (feedbackSku) feedbackSku.style.display = 'none';
+
+    // Limpiar bordes
+    document.getElementById('prodCodigo').style.borderColor = '';
+    document.getElementById('prodSku').style.borderColor = '';
+
     if (idProducto == null) {
         titulo.textContent = 'Nuevo Producto';
         document.getElementById('prodCategoria').value = '';
@@ -2306,6 +2424,7 @@ async function abrirModalProducto(idProducto) {
         const p = _productosCache.find(x => x.idProducto === idProducto);
         if (p) {
             document.getElementById('prodCodigo').value = p.codigoInterno || '';
+            document.getElementById('prodSku').value = p.sku || '';
             document.getElementById('prodNombre').value = p.nombre || '';
             document.getElementById('prodPrecio').value = p.precioVenta || 0;
             document.getElementById('prodStock').value = p.stockActual || 0;
@@ -2313,18 +2432,417 @@ async function abrirModalProducto(idProducto) {
         }
     }
 
+    setupBusquedaProductoEnForm();
+
     showModal(modal);
+}
+
+/**
+ * Configura la búsqueda automática al escribir en los campos de código/SKU.
+ * El título del modal cambia dinámicamente entre "Nuevo Producto" y "Editar Producto".
+ * Si el producto es nuevo, limpia los campos para crear.
+ */
+/**
+ * Configura la búsqueda automática al escribir en los campos de código/SKU.
+ * - Cambia el título del modal dinámicamente entre "Nuevo Producto" y "Editar Producto".
+ * - Si el producto es nuevo, limpia los campos (excepto código y SKU).
+ * - Incluye botón "🎲 Generar código" que verifica unicidad antes de asignar.
+ */
+/**
+ * Configura la búsqueda automática al escribir en los campos de código/SKU.
+ * - Cambia el título dinámicamente.
+ * - Si el producto es nuevo Y el usuario escribió el código MANUALMENTE → limpia campos.
+ * - Si el código viene del botón "Generar" → NO limpia campos.
+ */
+function setupBusquedaProductoEnForm() {
+    const inputCodigo = document.getElementById('prodCodigo');
+    const inputSku = document.getElementById('prodSku');
+    const inputNombre = document.getElementById('prodNombre');
+    const inputPrecio = document.getElementById('prodPrecio');
+    const inputStock = document.getElementById('prodStock');
+    const selectCategoria = document.getElementById('prodCategoria');
+    const titulo = document.getElementById('tituloModalProducto');
+    const feedbackCodigo = document.getElementById('prodCodigoFeedback');
+    const feedbackSku = document.getElementById('prodSkuFeedback');
+    const btnGenerar = document.getElementById('btnGenerarCodigo');
+
+    if (!inputCodigo || !inputSku) return;
+
+    let timeoutBusqueda = null;
+    let versionBusqueda = 0;
+
+    /**
+     * Limpia los campos de datos del producto (excepto código y SKU).
+     */
+    function limpiarCamposProducto() {
+        if (inputNombre) inputNombre.value = '';
+        if (inputPrecio) inputPrecio.value = '';
+        if (inputStock) inputStock.value = '';
+        if (selectCategoria) selectCategoria.value = '';
+    }
+
+    function resetearANuevo() {
+        _editandoProductoId = null;
+        if (titulo) titulo.textContent = 'Nuevo Producto';
+    }
+
+    /**
+     * Busca un producto por código o SKU.
+     * @param {boolean} limpiarSiNuevo - Si es true, limpia los campos cuando es nuevo (solo cuando el usuario escribió el código manualmente)
+     */
+    function buscarYcargar(codigo, sku, limpiarSiNuevo = false) {
+        if (timeoutBusqueda) clearTimeout(timeoutBusqueda);
+        const version = ++versionBusqueda;
+
+        timeoutBusqueda = setTimeout(async () => {
+            if (version !== versionBusqueda) return;
+
+            const codigoLimpio = (codigo || '').trim();
+            const skuLimpio = (sku || '').trim();
+
+            // ---- CASO 1: ambos vacíos → resetear a "Nuevo Producto" ----
+            if (!codigoLimpio && !skuLimpio) {
+                resetearANuevo();
+                if (limpiarSiNuevo) limpiarCamposProducto();
+
+                if (feedbackCodigo) feedbackCodigo.style.display = 'none';
+                if (feedbackSku) feedbackSku.style.display = 'none';
+                inputCodigo.style.borderColor = '';
+                inputSku.style.borderColor = '';
+                return;
+            }
+
+            // ---- Buscar producto en caché local ----
+            let producto = (_productosCache || []).find(p => {
+                const c = (p.codigoInterno || '').toUpperCase();
+                const s = (p.sku || '').toUpperCase();
+                return (codigoLimpio && c === codigoLimpio.toUpperCase()) ||
+                       (skuLimpio && s === skuLimpio.toUpperCase());
+            });
+
+            // Si no está, consultar la API
+            if (!producto) {
+                const query = codigoLimpio || skuLimpio;
+                try {
+                    const resp = await api.get(`/Productos/search?q=${encodeURIComponent(query)}`);
+                    if (resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+                        producto = resp.data.find(p => {
+                            const c = (p.codigoInterno || '').toUpperCase();
+                            const s = (p.sku || '').toUpperCase();
+                            return (codigoLimpio && c === codigoLimpio.toUpperCase()) ||
+                                   (skuLimpio && s === skuLimpio.toUpperCase());
+                        });
+                    }
+                } catch (err) {
+                    console.warn('Error buscando producto:', err);
+                }
+            }
+
+            // ---- CASO 2: encontrado → cargar para editar ----
+            if (producto) {
+                if (_editandoProductoId === producto.idProducto) {
+                    if (feedbackCodigo) feedbackCodigo.style.display = 'none';
+                    if (feedbackSku) feedbackSku.style.display = 'none';
+                    return;
+                }
+
+                _editandoProductoId = producto.idProducto;
+                if (titulo) titulo.textContent = '✏️ Editar Producto';
+
+                if (inputCodigo) inputCodigo.value = producto.codigoInterno || '';
+                if (inputSku) inputSku.value = producto.sku || '';
+                if (inputNombre) inputNombre.value = producto.nombre || '';
+                if (inputPrecio) inputPrecio.value = producto.precioVenta || 0;
+                if (inputStock) inputStock.value = producto.stockActual || 0;
+                if (selectCategoria) selectCategoria.value = producto.idCategoria || '';
+
+                if (feedbackCodigo) {
+                    feedbackCodigo.style.display = 'block';
+                    feedbackCodigo.textContent = '✅ Producto encontrado';
+                    feedbackCodigo.style.color = '#16a34a';
+                }
+                if (feedbackSku) {
+                    feedbackSku.style.display = 'block';
+                    feedbackSku.textContent = '✅ Producto encontrado';
+                    feedbackSku.style.color = '#16a34a';
+                }
+                inputCodigo.style.borderColor = '#16a34a';
+                inputSku.style.borderColor = '#16a34a';
+
+                if (typeof toast === 'function') {
+                    toast(`📝 Editando "${producto.nombre}"`, 'success');
+                }
+                return;
+            }
+
+            // ---- CASO 3: no encontrado → modo "crear" ----
+            resetearANuevo();
+
+            // 🆕 Solo limpiar campos si el usuario escribió el código/SKU manualmente
+            if (limpiarSiNuevo) {
+                limpiarCamposProducto();
+            }
+
+            if (feedbackCodigo && codigoLimpio) {
+                feedbackCodigo.style.display = 'block';
+                feedbackCodigo.textContent = '🆕 Código disponible';
+                feedbackCodigo.style.color = '#2563eb';
+                inputCodigo.style.borderColor = '#2563eb';
+            }
+            if (feedbackSku && skuLimpio) {
+                feedbackSku.style.display = 'block';
+                feedbackSku.textContent = '🆕 SKU disponible';
+                feedbackSku.style.color = '#2563eb';
+                inputSku.style.borderColor = '#2563eb';
+            }
+        }, 400);
+    }
+
+    // ============================================================
+    // LISTENERS de código y SKU
+    // ============================================================
+      if (!inputCodigo._busquedaAttached) {
+        inputCodigo._busquedaAttached = true;
+        inputCodigo.addEventListener('input', () => {
+            // 🆕 Ignorar si el evento fue disparado por el botón "Generar"
+            if (inputCodigo._skipBusqueda) {
+                inputCodigo._skipBusqueda = false;
+                return;
+            }
+            buscarYcargar(inputCodigo.value, inputSku.value, true);
+        });
+    }
+
+    if (!inputSku._busquedaAttached) {
+        inputSku._busquedaAttached = true;
+        inputSku.addEventListener('input', () => {
+            buscarYcargar(inputCodigo.value, inputSku.value, true);
+        });
+    }
+
+    // ============================================================
+    // BOTÓN "🎲 GENERAR CÓDIGO"
+    // ============================================================
+    if (btnGenerar && !btnGenerar._attached) {
+        btnGenerar._attached = true;
+        btnGenerar.addEventListener('click', async () => {
+            const nombre = document.getElementById('prodNombre')?.value?.trim() || '';
+            const catRaw = document.getElementById('prodCategoria')?.value;
+            const idCategoria = catRaw ? parseInt(catRaw, 10) : null;
+
+            if (!nombre) {
+                toast('Escribe primero el nombre del producto', 'error');
+                document.getElementById('prodNombre')?.focus();
+                return;
+            }
+
+            const inputCodigoActual = document.getElementById('prodCodigo');
+            if (inputCodigoActual.value.trim()) {
+                if (!confirm(`¿Reemplazar "${inputCodigoActual.value}" por uno generado automáticamente?`)) {
+                    return;
+                }
+            }
+
+            btnGenerar.disabled = true;
+            btnGenerar.textContent = '⏳ Generando...';
+
+            try {
+                const codigoGenerado = await generarCodigoInterno(nombre, idCategoria);
+
+                // 🆕 Bloquear temporalmente el listener para que no dispare la búsqueda
+                inputCodigoActual._skipBusqueda = true;
+                inputCodigoActual.value = codigoGenerado;
+
+                // Disparar input (el listener lo ignora por el flag)
+                inputCodigoActual.dispatchEvent(new Event('input', { bubbles: true }));
+
+                // Mostrar feedback verde directamente
+                const feedbackCodigo = document.getElementById('prodCodigoFeedback');
+                if (feedbackCodigo) {
+                    feedbackCodigo.style.display = 'block';
+                    feedbackCodigo.textContent = '🎲 Código generado';
+                    feedbackCodigo.style.color = '#2563eb';
+                }
+                inputCodigoActual.style.borderColor = '#2563eb';
+
+                toast(`🎲 Código generado: ${codigoGenerado}`, 'success');
+            } catch (err) {
+                console.error('Error generando código:', err);
+                toast('Error al generar el código', 'error');
+            } finally {
+                btnGenerar.disabled = false;
+                btnGenerar.textContent = '🎲 Generar';
+            }
+        });
+    }
+}
+/**
+ * Genera un código interno descriptivo y único.
+ * 
+ * Llama al backend (/Productos/generar-codigo) que garantiza unicidad
+ * con bloqueo transaccional. Si el backend falla, usa un fallback local
+ * basado en el caché de productos.
+ * 
+ * Formato: [CAT]-[NOM]-[NNN]
+ *   CAT: 3 letras de la categoría (o "GEN")
+ *   NOM: 3 letras del nombre (o "PROD")
+ *   NNN: número secuencial (001, 002, ...)
+ * 
+ * @param {string} nombre - Nombre del producto (obligatorio)
+ * @param {number|null} idCategoria - ID de la categoría (opcional)
+ * @returns {Promise<string>} Código único garantizado
+ */
+async function generarCodigoInterno(nombre, idCategoria) {
+    if (!nombre || !String(nombre).trim()) {
+        throw new Error('El nombre es obligatorio para generar un código');
+    }
+
+    try {
+        // -------- 1. Intentar con el backend --------
+        const params = new URLSearchParams();
+        params.append('nombre', String(nombre).trim());
+        if (idCategoria != null) {
+            params.append('idCategoria', String(idCategoria));
+        }
+
+        const resp = await api.get(`/Productos/generar-codigo?${params.toString()}`);
+
+        if (resp.ok && resp.data && resp.data.codigo) {
+            console.log(`🎲 Código generado por el servidor: ${resp.data.codigo}`);
+            return resp.data.codigo;
+        }
+
+        console.warn('⚠️ El servidor no devolvió un código válido. Usando fallback local.');
+        return generarCodigoInternoLocal(nombre, idCategoria);
+
+    } catch (err) {
+        console.warn('⚠️ Error al generar código desde el backend. Usando fallback local:', err);
+        return generarCodigoInternoLocal(nombre, idCategoria);
+    }
+}
+
+/**
+ * Fallback local: genera un código único basado SOLO en el caché del navegador.
+ * Menos robusto que el backend (puede fallar en concurrencia extrema), pero
+ * funcional cuando el servidor no está disponible.
+ * 
+ * @param {string} nombre
+ * @param {number|null} idCategoria
+ * @returns {string}
+ */
+function generarCodigoInternoLocal(nombre, idCategoria) {
+    // -------- 1. Prefijo de categoría --------
+    let prefijoCat = 'GEN';
+    if (idCategoria != null) {
+        const cat = (_categoriasCache || []).find(c => c.idCategoria === idCategoria);
+        if (cat && cat.nombre) {
+            const catLimpia = limpiarParaCodigo(cat.nombre);
+            prefijoCat = catLimpia.length >= 3
+                ? catLimpia.substring(0, 3)
+                : catLimpia.padEnd(3, 'X');
+        }
+    }
+
+    // -------- 2. Prefijo del nombre --------
+    let prefijoNom = 'PROD';
+    if (nombre && String(nombre).trim()) {
+        const nombreLimpio = limpiarParaCodigo(nombre);
+        if (nombreLimpio.length >= 3) {
+            prefijoNom = nombreLimpio.substring(0, 3);
+        } else if (nombreLimpio.length > 0) {
+            prefijoNom = nombreLimpio.padEnd(3, 'X');
+        }
+    }
+
+    const prefijo = `${prefijoCat}-${prefijoNom}`;
+
+    // -------- 3. Buscar el siguiente número secuencial --------
+    const productosExistentes = (_productosCache || []).filter(p =>
+        (p.codigoInterno || '').toUpperCase().startsWith((prefijo + '-').toUpperCase())
+    );
+
+    let siguiente = 1;
+    if (productosExistentes.length > 0) {
+        const numeros = productosExistentes
+            .map(p => {
+                const partes = String(p.codigoInterno || '').split('-');
+                const ultimo = partes[partes.length - 1];
+                const n = parseInt(ultimo, 10);
+                return isNaN(n) ? 0 : n;
+            })
+            .filter(n => n > 0);
+
+        if (numeros.length > 0) {
+            siguiente = Math.max(...numeros) + 1;
+        }
+    }
+
+    // -------- 4. Verificar unicidad en caché local --------
+    const MAX_INTENTOS = 200;
+    for (let i = 0; i < MAX_INTENTOS; i++) {
+        const codigo = `${prefijo}-${String(siguiente).padStart(3, '0')}`;
+
+        const existe = (_productosCache || []).some(p =>
+            (p.codigoInterno || '').toUpperCase() === codigo.toUpperCase()
+        );
+
+        if (!existe) {
+            console.log(`🎲 Código generado (fallback local): ${codigo}`);
+            return codigo;
+        }
+
+        siguiente++;
+    }
+
+    // -------- 5. Fallback con timestamp si no encuentra --------
+    const timestamp = Date.now().toString(36).toUpperCase().slice(-6);
+    const codigoFallback = `${prefijo}-${timestamp}`;
+    console.warn(`⚠️ Se usó fallback con timestamp: ${codigoFallback}`);
+    return codigoFallback;
+}
+
+/**
+ * Limpia un texto para usar en un código: sin tildes, sin signos, sin espacios.
+ * Convierte "Arroz Diana 500g" → "ARROZDIA" o "Coca-Cola" → "COCACOLA"
+ * 
+ * @param {string} str
+ * @returns {string}
+ */
+function limpiarParaCodigo(str) {
+    if (!str) return '';
+    return String(str)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')   // quitar tildes
+        .replace(/ñ/gi, 'N')                // ñ → N
+        .replace(/[^a-zA-Z0-9]/g, '')       // solo letras y números
+        .toUpperCase();
 }
 
 async function guardarProducto(e) {
     e.preventDefault();
 
     const esEdicion = _editandoProductoId != null;
+
     const categoriaRaw = document.getElementById('prodCategoria').value;
     const idCategoria = categoriaRaw ? parseInt(categoriaRaw, 10) : null;
 
+    let codigoRaw = document.getElementById('prodCodigo').value.trim();
+
+    // 🆕 Auto-generar código si está vacío (solo al crear)
+    if (!codigoRaw && !esEdicion) {
+        const nombre = document.getElementById('prodNombre').value.trim();
+        if (nombre) {
+            codigoRaw = await generarCodigoInterno(nombre, idCategoria, true);
+            document.getElementById('prodCodigo').value = codigoRaw;
+            toast(`🎲 Código generado: ${codigoRaw}`, 'success');
+        }
+    }
+
+    const skuRaw = document.getElementById('prodSku').value.trim();
+
     const dto = {
-        codigoInterno: document.getElementById('prodCodigo').value.trim(),
+        codigoInterno: codigoRaw,
+        sku: skuRaw || null,
         nombre: document.getElementById('prodNombre').value.trim(),
         idCategoria: idCategoria,
         actualizarCategoria: true,
@@ -2337,24 +2855,74 @@ async function guardarProducto(e) {
         return;
     }
 
-    let resp;
-    if (esEdicion) {
-        resp = await api.put(`/Productos/${_editandoProductoId}`, dto);
-    } else {
-        resp = await api.post('/Productos', {
-            ...dto,
-            stockMinimo: 5,
-            impuestoPorcentaje: 19,
-            estado: 'Activo'
-        });
+    const btnGuardar = document.getElementById('btnGuardarProducto');
+    const textoOriginal = btnGuardar.textContent;
+
+    // 🆕 Hasta 3 intentos si hay colisión de código
+    const MAX_INTENTOS = 3;
+    let intentos = 0;
+    let resp = null;
+
+    while (intentos < MAX_INTENTOS) {
+        intentos++;
+        btnGuardar.disabled = true;
+        btnGuardar.textContent = `⏳ Guardando... (${intentos}/${MAX_INTENTOS})`;
+
+        if (esEdicion) {
+            resp = await api.put(`/Productos/${_editandoProductoId}`, dto);
+        } else {
+            resp = await api.post('/Productos', {
+                ...dto,
+                stockMinimo: 5,
+                impuestoPorcentaje: 19,
+                estado: 'Activo'
+            });
+        }
+
+        // ✅ Éxito → salir del loop
+        if (resp.ok) break;
+
+        // ⚠️ Si es conflicto de código, regenerar y reintentar
+        if (resp.status === 409 && !esEdicion) {
+            const mensaje = resp.data?.message || '';
+            const esCodigoDuplicado = mensaje.toLowerCase().includes('codigo') ||
+                                       mensaje.toLowerCase().includes('código');
+
+            if (esCodigoDuplicado) {
+                console.warn(`🔄 Código "${dto.codigoInterno}" en uso. Regenerando...`);
+
+                const nombre = document.getElementById('prodNombre').value.trim();
+                dto.codigoInterno = await generarCodigoInterno(nombre, idCategoria, true);
+                document.getElementById('prodCodigo').value = dto.codigoInterno;
+
+                toast(`🎲 Reintentando con: ${dto.codigoInterno}`, 'success');
+                continue;   // volver a intentar
+            }
+        }
+
+        // Otros errores → salir
+        break;
     }
 
-    if (!resp.ok) return;
+    btnGuardar.disabled = false;
+    btnGuardar.textContent = textoOriginal;
+
+    if (!resp || !resp.ok) {
+        // El toast ya lo mostró apiFetch
+        return;
+    }
 
     toast(esEdicion ? '✅ Producto actualizado' : '✅ Producto creado');
     hideModal(document.getElementById('modalProducto'));
+
+    window._productosCache = null;
+
     await initInventario();
     await cargarProductosDesdeAPI();
+
+    if (document.getElementById('vista-categorias')?.hidden === false) {
+        await initCategorias();
+    }
 }
 
 async function eliminarProductoDelInventario(idProducto) {
@@ -2364,8 +2932,17 @@ async function eliminarProductoDelInventario(idProducto) {
     if (!resp.ok) return;
 
     toast('✅ Producto eliminado');
+    
+    // 🆕 Invalidar caché
+    window._productosCache = null;
+    
     await initInventario();
     await cargarProductosDesdeAPI();
+    
+    // 🆕 Si estamos en categorías, refrescar
+    if (document.getElementById('vista-categorias')?.hidden === false) {
+        await initCategorias();
+    }
 }
 
 /* ============================================================

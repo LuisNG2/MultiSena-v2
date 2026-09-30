@@ -421,6 +421,167 @@ namespace MultiVentasPOS.Controllers
             return Ok(results);
         }
 
+                // ============================================================
+        // GET: api/Productos/generar-codigo?nombre=xxx&idCategoria=1
+        // Genera un código interno único basado en el nombre y categoría.
+        // Formato: [CAT]-[NOM]-[NNN]
+        //   CAT: 3 letras de la categoría (o "GEN")
+        //   NOM: 3 letras del nombre (o "PROD")
+        //   NNN: número secuencial (001, 002, ...)
+        // 
+        // Usa bloqueo transaccional para garantizar unicidad incluso
+        // bajo concurrencia.
+        // ============================================================
+        [HttpGet("generar-codigo")]
+        [Authorize(Roles = "1")]
+        public async Task<IActionResult> GenerarCodigo(
+            [FromQuery] string nombre,
+            [FromQuery] int? idCategoria)
+        {
+            if (string.IsNullOrWhiteSpace(nombre))
+                return BadRequest(new { message = "El nombre es obligatorio." });
+
+            // -------- 1. Prefijo de categoría --------
+            string prefijoCat = "GEN";
+            if (idCategoria.HasValue)
+            {
+                var cat = await _context.Categorias
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.IdCategoria == idCategoria.Value);
+                if (cat != null && !string.IsNullOrWhiteSpace(cat.Nombre))
+                {
+                    prefijoCat = LimpiarParaCodigo(cat.Nombre).PadRight(3).Substring(0, 3);
+                }
+            }
+
+            // -------- 2. Prefijo del nombre --------
+            string prefijoNom = "PROD";
+            var nombreLimpio = LimpiarParaCodigo(nombre);
+            if (!string.IsNullOrEmpty(nombreLimpio))
+            {
+                prefijoNom = nombreLimpio.Length >= 3
+                    ? nombreLimpio.Substring(0, 3)
+                    : nombreLimpio.PadRight(3, 'X');
+            }
+
+            string prefijo = $"{prefijoCat}-{prefijoNom}";
+
+            // -------- 3. Buscar el siguiente secuencial con BLOQUEO --------
+            // Usamos una transacción serializable para evitar condiciones de carrera.
+            using var transaction = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+
+            try
+            {
+                // Buscar todos los códigos con este prefijo (bloqueando las filas)
+                var codigosExistentes = await _context.Productos
+                    .FromSqlRaw($@"
+                        SELECT * FROM productos WITH (UPDLOCK, ROWLOCK)
+                        WHERE codigo_interno LIKE @p0
+                    ", $"{prefijo}-%")
+                    .Select(p => p.CodigoInterno)
+                    .ToListAsync();
+
+                int siguiente = 1;
+                if (codigosExistentes.Any())
+                {
+                    var numeros = codigosExistentes
+                        .Select(c =>
+                        {
+                            var partes = c.Split('-');
+                            var ultimo = partes.LastOrDefault() ?? "0";
+                            return int.TryParse(ultimo, out var n) ? n : 0;
+                        })
+                        .Where(n => n > 0)
+                        .ToList();
+
+                    if (numeros.Any())
+                        siguiente = numeros.Max() + 1;
+                }
+
+                // -------- 4. Generar candidato y verificar que no exista --------
+                const int MAX_INTENTOS = 100;
+                string? codigoGenerado = null;
+
+                for (int i = 0; i < MAX_INTENTOS; i++)
+                {
+                    var candidato = $"{prefijo}-{siguiente:D3}";
+
+                    var existe = await _context.Productos
+                        .AnyAsync(p => p.CodigoInterno == candidato);
+
+                    if (!existe)
+                    {
+                        codigoGenerado = candidato;
+                        break;
+                    }
+
+                    siguiente++;
+                }
+
+                // -------- 5. Fallback con timestamp si no encuentra --------
+                if (codigoGenerado == null)
+                {
+                    var timestamp = DateTime.UtcNow.Ticks.ToString("X").Substring(10, 6);
+                    codigoGenerado = $"{prefijo}-{timestamp}";
+                    _logger.LogWarning(
+                        "No se encontró código único después de {Intentos} intentos. " +
+                        "Usando fallback: {Codigo}",
+                        MAX_INTENTOS, codigoGenerado);
+                }
+
+                await transaction.CommitAsync();
+
+                _logger.LogInformation(
+                    "Código generado: {Codigo} para '{Nombre}' (categoría {IdCat})",
+                    codigoGenerado, nombre, idCategoria);
+
+                return Ok(new
+                {
+                    codigo = codigoGenerado,
+                    prefijo = prefijo,
+                    secuencial = siguiente
+                });
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Error generando código para '{Nombre}'", nombre);
+                return StatusCode(500, new { message = "Error al generar el código." });
+            }
+        }
+
+        // ============================================================
+        // HELPER: Limpia un texto para usar en un código
+        // (sin tildes, sin signos, sin espacios, mayúsculas)
+        // ============================================================
+        private static string LimpiarParaCodigo(string str)
+        {
+            if (string.IsNullOrWhiteSpace(str)) return string.Empty;
+
+            // Quitar tildes
+            var normalized = str.Normalize(System.Text.NormalizationForm.FormD);
+            var sb = new System.Text.StringBuilder();
+            foreach (var c in normalized)
+            {
+                var categoria = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+                if (categoria != System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    sb.Append(c);
+                }
+            }
+            var sinTildes = sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+
+            // Reemplazar ñ, quitar no-alfanuméricos, mayúsculas
+            var limpio = System.Text.RegularExpressions.Regex.Replace(
+                sinTildes.Replace("ñ", "n").Replace("Ñ", "N"),
+                "[^a-zA-Z0-9]",
+                ""
+            ).ToUpperInvariant();
+
+            return limpio;
+        }
+
         private bool ProductoExists(int id) => _context.Productos.Any(e => e.IdProducto == id);
     }
 

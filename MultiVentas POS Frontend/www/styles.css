@@ -2435,3 +2435,541 @@ transition: transform .25s ease; z-index: 260;
         justify-content: center;
     }
 }
+.badge-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 10px;
+    height: 24px;
+    background: rgba(37, 99, 235, 0.15);
+    color: var(--color-primario);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.badge-count.zero {
+    background: rgba(100, 116, 139, 0.15);
+    color: var(--text-muted);
+}
+
+/* ============================================================
+   REDISEÑO MÓVIL — Pantallas ≤ 900px
+   Enfoque limpio: catálogo a pantalla completa, carrito en drawer
+   ============================================================ */
+@media (max-width: 900px) {
+
+    /* --------------------------------------------------------
+       1. HEADER simplificado
+       -------------------------------------------------------- */
+    .header-multiventas {
+        padding: 0 10px !important;
+        gap: 8px !important;
+        height: 56px !important;
+    }
+
+    .header-left {
+        gap: 8px !important;
+        flex: 1 !important;
+        min-width: 0 !important;
+    }
+
+    .header-left #btnFixSidebar {
+        display: none !important;
+    }
+
+    .hamburger,
+    #btnMenu {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 6px 8px !important;
+        font-size: 1.2rem !important;
+        flex-shrink: 0 !important;
+    }
+
+    #titulo-vista {
+        font-size: 1rem !important;
+        padding-left: 0 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        flex: 1 !important;
+    }
+
+    /* Ocultar elementos secundarios del header */
+    .header-right .estado-conexion,
+    .header-right .reloj {
+        display: none !important;
+    }
+
+    .header-right {
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+    }
+
+    .header-right .limpiar-btn .texto {
+        display: none !important;
+    }
+
+    .header-right .logout-btn .texto {
+        display: none !important;
+    }
+
+    /* --------------------------------------------------------
+       2. SIDEBAR deslizable (overlay)
+       -------------------------------------------------------- */
+    .sidebar,
+    .sidebar.modo-auto,
+    .sidebar.modo-fijo {
+        position: fixed !important;
+        top: 56px !important;
+        left: 0 !important;
+        height: calc(100vh - 56px) !important;
+        width: 240px !important;
+        transform: translateX(-100%) !important;
+        transition: transform 0.25s ease !important;
+        z-index: 998 !important;
+        padding: 12px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow-y: auto !important;
+        box-shadow: 4px 0 15px rgba(0, 0, 0, 0.3) !important;
+    }
+
+    .sidebar.active {
+        transform: translateX(0) !important;
+    }
+
+    /* Mostrar SIEMPRE los textos en el sidebar abierto */
+    .sidebar .text,
+    .sidebar .logo,
+    .sidebar .label {
+        opacity: 1 !important;
+        visibility: visible !important;
+        width: auto !important;
+        display: inline !important;
+    }
+
+    .sidebar .sidebar-brand {
+        justify-content: flex-start !important;
+        gap: 10px !important;
+    }
+
+    .sidebar .sidebar-top .logo-text {
+        display: inline !important;
+        opacity: 1 !important;
+        width: auto !important;
+    }
+
+    /* Los botones del sidebar alineados a la izquierda */
+    .sidebar button,
+    .sidebar a {
+        justify-content: flex-start !important;
+        padding: 12px 14px !important;
+        gap: 12px !important;
+        font-size: 15px !important;
+    }
+
+    /* Ocultar el botón pin y demás elementos no necesarios */
+    .sidebar-top #btnFixSidebar {
+        display: none !important;
+    }
+
+    /* Overlay oscuro */
+    .overlay.active {
+        display: block !important;
+        background: rgba(0, 0, 0, 0.5) !important;
+        z-index: 997 !important;
+    }
+
+    /* --------------------------------------------------------
+       3. GRID PRINCIPAL — Catálogo a pantalla completa
+       -------------------------------------------------------- */
+    body {
+        grid-template-columns: 0 1fr !important;
+        grid-template-areas:
+            "header header"
+            "sidebar main" !important;
+    }
+
+    main {
+        padding: 8px !important;
+    }
+
+    /* --------------------------------------------------------
+       4. VISTA DE VENTAS — Split deshabilitado
+       -------------------------------------------------------- */
+    #splitRoot {
+        display: block !important;
+        height: auto !important;
+        min-height: calc(100vh - 56px) !important;
+    }
+
+    #productos {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        padding: 8px !important;
+        border-radius: 8px !important;
+        border-right: none !important;
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: calc(100vh - 100px) !important;
+        padding-bottom: 90px !important;
+    }
+
+    /* Ocultar el carrito del panel derecho (se usa el drawer) */
+    #contenedor-ventas {
+        display: none !important;
+    }
+
+    .split-divider {
+        display: none !important;
+    }
+
+    /* --------------------------------------------------------
+       5. TABS DE VENTAS — Compactas y sin scroll horizontal
+       -------------------------------------------------------- */
+    .ventas-tabs {
+        padding: 4px 6px !important;
+    }
+
+    .ventas-tabs ul {
+        gap: 4px !important;
+        flex-wrap: wrap !important;
+    }
+
+    .tab {
+        padding: 4px 8px !important;
+        font-size: 12px !important;
+    }
+
+    #nuevaVenta,
+    #cerrarTodas {
+        padding: 4px 10px !important;
+        font-size: 12px !important;
+    }
+
+    /* --------------------------------------------------------
+       6. VISTA-CONTROLES (buscador + filtros)
+       -------------------------------------------------------- */
+    #productos .vista-controles {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        padding: 8px !important;
+        position: static !important;
+    }
+
+    .vista-controles .search {
+        margin: 0 !important;
+        transform: none !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .search input {
+        width: 100% !important;
+        height: 40px !important;
+        font-size: 14px !important;
+    }
+
+    /* Filtros de categoría y vista */
+    .filtro-categoria,
+    #btnToggle {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* --------------------------------------------------------
+       7. CATÁLOGO DE PRODUCTOS — Grid compacto
+       -------------------------------------------------------- */
+    #productos .productos {
+        padding-top: 6px !important;
+        padding-right: 6px !important;
+    }
+
+    .productos.grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+        gap: 8px !important;
+        padding: 4px !important;
+    }
+
+    .productos.grid .producto {
+        padding: 10px !important;
+        min-height: 170px !important;
+    }
+
+    .productos.grid .prod-nombre {
+        font-size: 12.5px !important;
+        min-height: 30px !important;
+    }
+
+    .productos.grid .prod-sku {
+        font-size: 10px !important;
+    }
+
+    .productos.grid .prod-precio {
+        font-size: 15px !important;
+    }
+
+    .productos.grid .prod-stock {
+        font-size: 10.5px !important;
+        padding: 2px 7px !important;
+    }
+
+    .productos.grid .producto .agregar {
+        font-size: 11.5px !important;
+        padding: 7px 8px !important;
+    }
+
+    /* Vista lista: reorganizar en dos filas */
+    .productos.lista .producto {
+        grid-template-columns: 1fr auto !important;
+        grid-template-areas:
+            "info precio"
+            "stock boton" !important;
+        gap: 6px 10px !important;
+        padding: 10px !important;
+    }
+
+    .productos.lista .prod-info { grid-area: info !important; }
+    .productos.lista .prod-precio { grid-area: precio !important; min-width: auto !important; }
+    .productos.lista .prod-stock { grid-area: stock !important; min-width: auto !important; text-align: left !important; }
+    .productos.lista .producto .agregar {
+        grid-area: boton !important;
+        width: 100% !important;
+        min-width: auto !important;
+    }
+
+    /* --------------------------------------------------------
+       8. FAB DEL CARRITO — Siempre visible y accesible
+       -------------------------------------------------------- */
+    #cartFab,
+    .cart-fab {
+        display: flex !important;
+        position: fixed !important;
+        bottom: 20px !important;
+        right: 20px !important;
+        width: 60px !important;
+        height: 60px !important;
+        z-index: 1200 !important;
+        font-size: 24px !important;
+        box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4) !important;
+    }
+
+    /* --------------------------------------------------------
+       9. DRAWER DEL CARRITO
+       -------------------------------------------------------- */
+    .cart-drawer {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 100vh !important;
+    }
+
+    /* --------------------------------------------------------
+       10. OTROS PANELES (Inventario, Usuarios, etc.)
+       -------------------------------------------------------- */
+    .panel {
+        padding: 10px !important;
+        border-radius: 8px !important;
+    }
+
+    .panel h2 {
+        font-size: 1.15rem !important;
+        margin-bottom: 12px !important;
+    }
+
+    /* Tabla responsiva: scroll horizontal si es necesario */
+    .panel .tabla-carrito,
+    .panel table {
+        font-size: 12px !important;
+    }
+
+    /* Resumen y dashboard */
+    .resumen-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px !important;
+    }
+
+    .card-resumen {
+        padding: 10px 8px !important;
+    }
+
+    .card-resumen h4 {
+        font-size: 12px !important;
+    }
+
+    .card-resumen p {
+        font-size: 16px !important;
+    }
+
+    /* Acciones: buscador + botones apilados */
+    .acciones-clientes {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 10px !important;
+    }
+
+    .acciones-botones,
+    .acciones-buscador {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .acciones-botones {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important;
+        gap: 6px !important;
+    }
+
+    .acciones-botones .btn {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+
+    .acciones-buscador .buscador-universal {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    /* --------------------------------------------------------
+       11. MODALES MÁS AMPLIOS EN MÓVIL
+       -------------------------------------------------------- */
+    .modal-content {
+        width: 95% !important;
+        max-width: 95% !important;
+        padding: 20px 16px !important;
+    }
+
+    .form-cliente {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ============================================================
+   MÓVIL MUY PEQUEÑO ≤ 480px
+   ============================================================ */
+@media (max-width: 480px) {
+    .productos.grid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+        gap: 6px !important;
+    }
+
+    .productos.grid .producto {
+        padding: 8px !important;
+        min-height: 160px !important;
+    }
+
+    .resumen-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    #cartFab,
+    .cart-fab {
+        width: 55px !important;
+        height: 55px !important;
+        font-size: 22px !important;
+        bottom: 16px !important;
+        right: 16px !important;
+    }
+}
+
+/* ============================================================
+   HINT VISUAL DEL BUSCADOR
+   ============================================================ */
+.buscador-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 6px 12px;
+    margin: 0 0 8px 0;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    background: rgba(37, 99, 235, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(37, 99, 235, 0.10);
+    line-height: 1.4;
+    transition: opacity 0.25s ease, max-height 0.25s ease, padding 0.25s ease, margin 0.25s ease;
+    overflow: hidden;
+    max-height: 60px;
+    flex-shrink: 0;              /* 🆕 NO comprimir */
+    position: relative;           /* 🆕 Asegurar que no sea absolute */
+    z-index: 1;                   /* 🆕 Por encima de las tarjetas */
+}
+
+.buscador-hint.oculto {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+    border-width: 0;
+    pointer-events: none;
+}
+
+.buscador-hint strong {
+    color: var(--color-primario);
+    font-weight: 700;
+}
+
+.buscador-hint code {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 11px;
+    color: var(--color-primario);
+    font-weight: 600;
+}
+
+.buscador-hint kbd {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-main);
+    text-align: center;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+
+/* Modo oscuro */
+[data-theme="dark"] .buscador-hint {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.15);
+}
+
+[data-theme="dark"] .buscador-hint code,
+[data-theme="dark"] .buscador-hint kbd {
+    background: var(--bg-body);
+    border-color: #334155;
+}
+
+[data-theme="dark"] .buscador-hint code {
+    color: #60a5fa;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+    .buscador-hint {
+        font-size: 11px;
+        padding: 5px 10px;
+    }
+    .buscador-hint kbd,
+    .buscador-hint code {
+        font-size: 10px;
+    }
+}

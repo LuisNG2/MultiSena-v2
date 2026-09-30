@@ -277,14 +277,15 @@
               <div class="search">
                   <input id="buscador" 
                         type="text" 
-                        placeholder="Buscar producto..." 
+                        placeholder="Buscar producto, SKU o categoría..."
                         data-buscador
                         data-tabla="catalogoProductos"
-                        data-on-scan="onScanCatalogo" />
+                        data-on-scan="onScanCatalogo"
+                        autocomplete="off"
+                        spellcheck="false" />
                   <button id="btnClearSearch" class="clear-btn" aria-label="Limpiar búsqueda">✖</button>
               </div>
 
-              <!-- 🆕 Filtro por categoría -->
               <select id="filtroCategoria" class="filtro-categoria" aria-label="Filtrar por categoría">
                   <option value="">📂 Todas las categorías</option>
               </select>
@@ -292,8 +293,14 @@
               <button id="btnToggle" class="btn small" aria-label="Cambiar vista">📋 Cambiar vista</button>
           </div>
 
+          <!-- 🆕 Hint visual de atajos (se oculta al escribir) -->
+          <div class="buscador-hint" id="buscadorHint">
+              💡 <strong>Tip:</strong> escribe <code>5 coca</code> para agregar 5 unidades.
+              Usa <kbd>Ctrl</kbd>+<kbd>1</kbd>-<kbd>5</kbd> para elegir un resultado rápido.
+          </div>
+
           <div class="productos lista" id="catalogoProductos">
-              <!-- productos -->
+              <!-- productos se renderizan aquí -->
           </div>
       </section>
 
@@ -718,40 +725,54 @@
   </div>
 </div>
 
-<!-- Modal Producto -->
 <div id="modalProducto" class="modal">
-  <div class="modal-content">
-    <span class="cerrar-modal" id="cerrarModalProducto">&times;</span>
-    <h3 id="tituloModalProducto">Nuevo Producto</h3>
-    <form id="formProducto" class="form-cliente">
-      <div class="form-row">
-        <label>🏷️ Código:</label>
-        <input type="text" id="prodCodigo" placeholder="Ej: A001" required>
-      </div>
-      <div class="form-row">
-        <label>📦 Nombre del producto:</label>
-        <input type="text" id="prodNombre" placeholder="Ej: Arroz Diana 500g" required>
-      </div>
-      <div class="form-row">
-        <label>🗂️ Categoría:</label>
-        <select id="prodCategoria">
-          <option value="">— Sin categoría —</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label>💰 Precio unitario:</label>
-        <input type="number" id="prodPrecio" min="0" placeholder="Ej: 2500" required>
-      </div>
-      <div class="form-row">
-        <label>📊 Stock disponible:</label>
-        <input type="number" id="prodStock" min="0" placeholder="Ej: 100" required>
-      </div>
-      <div class="form-buttons">
-        <button class="btn" id="btnGuardarProducto">💾 Guardar</button>
-        <button class="btn ghost" id="btnCancelarProducto" type="button">Cancelar</button>
-      </div>
-    </form>
-  </div>
+    <div class="modal-content">
+        <span class="cerrar-modal" id="cerrarModalProducto">&times;</span>
+        <h3 id="tituloModalProducto">Nuevo Producto</h3>
+        <form id="formProducto" class="form-cliente">
+            <div class="form-row">
+              <label>🏷️ Código interno:</label>
+              <div style="display: flex; gap: 6px; align-items: stretch;">
+                  <input type="text" id="prodCodigo"
+                        placeholder="Ej: A001 (o déjalo vacío para generar)"
+                        style="flex: 1;">
+                  <button type="button" id="btnGenerarCodigo" class="btn ghost small"
+                          title="Generar código automáticamente"
+                          style="white-space: nowrap; padding: 8px 12px;">
+                      🎲 Generar
+                  </button>
+              </div>
+              <small id="prodCodigoFeedback" style="font-size:11px; display:none;"></small>
+          </div>
+            <div class="form-row">
+                <label>📦 SKU / Código de barras:</label>
+                <input type="text" id="prodSku" placeholder="Ej: 7701234567890">
+                <small id="prodSkuFeedback" style="font-size:11px; display:none;"></small>
+            </div>
+            <div class="form-row">
+                <label>📝 Nombre del producto:</label>
+                <input type="text" id="prodNombre" placeholder="Ej: Arroz Diana 500g" required>
+            </div>
+            <div class="form-row">
+                <label>🗂️ Categoría:</label>
+                <select id="prodCategoria">
+                    <option value="">— Sin categoría —</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>💰 Precio unitario:</label>
+                <input type="number" id="prodPrecio" min="0" placeholder="Ej: 2500" required>
+            </div>
+            <div class="form-row">
+                <label>📊 Stock disponible:</label>
+                <input type="number" id="prodStock" min="0" placeholder="Ej: 100" required>
+            </div>
+            <div class="form-buttons">
+                <button class="btn" id="btnGuardarProducto">💾 Guardar</button>
+                <button class="btn ghost" id="btnCancelarProducto" type="button">Cancelar</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <!-- Modal Categoría -->

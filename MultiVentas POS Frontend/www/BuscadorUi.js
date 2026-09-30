@@ -529,119 +529,148 @@ const BuscadorUI = (() => {
         function agregarPrimeroAlCarrito(encontrados) {
             if (!encontrados || encontrados.length === 0) return;
             agregarItemAlCarrito(encontrados[0], input.value);
-        }
+                    }
 
-                /**
-         * Agrega un item al carrito SUMANDO cantidades si ya existe.
-         * Respeta el stock disponible y muestra UN SOLO toast.
-         */
-                function agregarItemAlCarrito(item, textoQuery) {
-            if (!item || !item._el) return;
+                            /**
+                     * Agrega un item al carrito SUMANDO cantidades si ya existe.
+                     * Respeta el stock disponible y muestra UN SOLO toast.
+                     */
+                    function agregarItemAlCarrito(item, textoQuery) {
+                if (!item || !item._el) return;
 
-            const elemento = item._el;
-            const btnAgregar = elemento.querySelector('.agregar');
+                const elemento = item._el;
+                const btnAgregar = elemento.querySelector('.agregar');
 
-            if (!btnAgregar || btnAgregar.disabled) {
-                if (typeof toast === 'function') {
-                    toast(`"${item.nombre}" sin stock`, 'error');
+                if (!btnAgregar || btnAgregar.disabled) {
+                    if (typeof toast === 'function') {
+                        toast(`"${item.nombre}" sin stock`, 'error');
+                    }
+                    return;
                 }
-                return;
-            }
 
-            // Extraer cantidad del query
-            const { cantidad: cantidadSolicitada } = (typeof Buscador.extraerCantidad === 'function')
-                ? Buscador.extraerCantidad(textoQuery || input.value)
-                : { cantidad: 1 };
+                // Extraer cantidad del query
+                const { cantidad: cantidadSolicitada } = (typeof Buscador.extraerCantidad === 'function')
+                    ? Buscador.extraerCantidad(textoQuery || input.value)
+                    : { cantidad: 1 };
 
-            const ventaId = estado.pestañaActiva || 'venta1';
-            const sku = elemento.dataset.sku;
-            const stock = parseInt(elemento.dataset.stockBase || elemento.dataset.stock || '0', 10);
-            const nombre = item.nombre || 'Producto';
+                const ventaId = estado.pestañaActiva || 'venta1';
+                const sku = String(elemento.dataset.sku || '').trim();
+                const nombre = item.nombre || 'Producto';
 
-            if (!sku || !estado.carritos[ventaId]) return;
+                if (!sku || !estado.carritos[ventaId]) return;
 
-            // 🔍 Ver si ya está en el carrito actual
-            const itemCarrito = estado.carritos[ventaId].find(i => i.sku === sku);
-            const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
+                // 🆕 Calcular stock total en BD (prioridad: stockBase > caché de productos > dataset.stock)
+                let stockTotalBD = 0;
 
-            // 🆕 Calcular cuánto está reservado en TODOS los carritos
-            let reservadoTotal = 0;
-            for (const vid in estado.carritos) {
-                const c = estado.carritos[vid] || [];
-                const i = c.find(x => x.sku === sku);
-                if (i) reservadoTotal += i.cantidad;
-            }
+                const stockBase = parseInt(elemento.dataset.stockBase || '0', 10);
+                if (stockBase > 0) {
+                    stockTotalBD = stockBase;
+                } else {
+                    // Fallback: buscar en el caché de productos en memoria
+                    const producto = (estado.productos || []).find(p => {
+                        const pSku = String(p.sku || p.codigoInterno || '').trim().toUpperCase();
+                        return pSku === sku.toUpperCase();
+                    });
 
-            // Espacio disponible = stock BD - reservado en OTROS carritos
-            const espacioDisponible = stock - (reservadoTotal - cantidadActual);
-            const cantidadFinal = Math.min(cantidadSolicitada, espacioDisponible);
-
-            if (espacioDisponible <= 0) {
-                if (typeof toast === 'function') {
-                    toast(`"${nombre}" ya tiene todo el stock en otros carritos (${stock})`, 'error');
+                    if (producto && producto.stockActual != null) {
+                        stockTotalBD = producto.stockActual;
+                    } else {
+                        stockTotalBD = parseInt(elemento.dataset.stock || '0', 10);
+                    }
                 }
+
+                // 🆕 Ver si ya está en el carrito actual (normalizando SKUs)
+                const itemCarrito = estado.carritos[ventaId].find(i =>
+                    String(i.sku || '').trim().toUpperCase() === sku.toUpperCase()
+                );
+                const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
+
+                // 🆕 Calcular cuánto está reservado en TODOS los carritos
+                let reservadoTotal = 0;
+                for (const vid in estado.carritos) {
+                    const c = estado.carritos[vid] || [];
+                    for (const i of c) {
+                        if (String(i.sku || '').trim().toUpperCase() === sku.toUpperCase()) {
+                            reservadoTotal += parseInt(i.cantidad, 10) || 0;
+                        }
+                    }
+                }
+
+                // Espacio disponible = stock BD - reservado en OTROS carritos
+                const reservadoOtros = reservadoTotal - cantidadActual;
+                const espacioDisponible = stockTotalBD - reservadoOtros;
+
+                // 🎯 Validación: si NO cabe al menos 1 unidad, bloquear
+                if (espacioDisponible < 1) {
+                    if (typeof toast === 'function') {
+                        const detalle = reservadoOtros > 0
+                            ? ` (${reservadoOtros} en otros carritos)`
+                            : '';
+                        toast(`"${nombre}" sin stock disponible${detalle}`, 'error');
+                    }
+                    input.value = '';
+                    aplicar('');
+                    input.focus();
+                    return;
+                }
+
+                const cantidadFinal = Math.min(cantidadSolicitada, espacioDisponible);
+                const recortado = cantidadFinal < cantidadSolicitada;
+
+                // Sumar o crear el item en el carrito
+                if (itemCarrito) {
+                    itemCarrito.cantidad += cantidadFinal;
+                } else {
+                    const idProducto = parseInt(elemento.dataset.idProducto, 10);
+                    const precio = parseFloat(elemento.dataset.precio) || 0;
+
+                    estado.carritos[ventaId].push({
+                        idProducto,
+                        sku,
+                        nombre,
+                        precio,
+                        cantidad: cantidadFinal,
+                        stock: stockTotalBD
+                    });
+                }
+
+                // Refrescar UI
+                if (typeof renderCarrito === 'function') renderCarrito(ventaId);
+                if (typeof guardarEstado === 'function') guardarEstado();
+                if (typeof actualizarConteos === 'function') actualizarConteos();
+                if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+
+                // Toast
+                if (typeof toast === 'function') {
+                    const total = cantidadActual + cantidadFinal;
+
+                    if (recortado) {
+                        toast(`⚠️ "${nombre}" — solo había ${espacioDisponible}. Total: ${total}`, 'error');
+                    } else if (cantidadFinal > 1) {
+                        if (cantidadActual > 0) {
+                            toast(`✅ +${cantidadFinal}× "${nombre}" (total: ${total})`);
+                        } else {
+                            toast(`✅ ${cantidadFinal}× "${nombre}" agregado`);
+                        }
+                    } else {
+                        if (cantidadActual > 0) {
+                            toast(`✅ +1 "${nombre}" (total: ${total})`);
+                        } else {
+                            toast(`✅ "${nombre}" agregado`);
+                        }
+                    }
+                }
+
+                // Flash visual
+                const fila = elemento.closest('tr') || elemento;
+                fila.classList.add('flash-agregado');
+                setTimeout(() => fila.classList.remove('flash-agregado'), 900);
+
+                // Limpiar input
                 input.value = '';
                 aplicar('');
                 input.focus();
-                return;
             }
-
-            const recortado = cantidadFinal < cantidadSolicitada;
-
-            // Sumar o crear el item en el carrito
-            if (itemCarrito) {
-                itemCarrito.cantidad += cantidadFinal;
-            } else {
-                const idProducto = parseInt(elemento.dataset.idProducto, 10);
-                const precio = parseFloat(elemento.dataset.precio) || 0;
-
-                estado.carritos[ventaId].push({
-                    idProducto,
-                    sku,
-                    nombre,
-                    precio,
-                    cantidad: cantidadFinal,
-                    stock: stock
-                });
-            }
-
-            // Refrescar UI
-            if (typeof renderCarrito === 'function') renderCarrito(ventaId);
-            if (typeof guardarEstado === 'function') guardarEstado();
-            if (typeof actualizarConteos === 'function') actualizarConteos();
-            if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
-
-            // Toast
-            if (typeof toast === 'function') {
-                const total = cantidadActual + cantidadFinal;
-
-                if (recortado) {
-                    toast(`⚠️ "${nombre}" — stock máximo (${stock}). Total: ${total}`, 'error');
-                } else if (cantidadFinal > 1) {
-                    if (cantidadActual > 0) {
-                        toast(`✅ +${cantidadFinal}× "${nombre}" (total: ${total})`);
-                    } else {
-                        toast(`✅ ${cantidadFinal}× "${nombre}" agregado`);
-                    }
-                } else {
-                    if (cantidadActual > 0) {
-                        toast(`✅ +1 "${nombre}" (total: ${total})`);
-                    } else {
-                        toast(`✅ "${nombre}" agregado`);
-                    }
-                }
-            }
-
-            // Flash visual
-            const fila = elemento.closest('tr') || elemento;
-            fila.classList.add('flash-agregado');
-            setTimeout(() => fila.classList.remove('flash-agregado'), 900);
-
-            // Limpiar input
-            input.value = '';
-            aplicar('');
-            input.focus();
-        }
 
         /* ============================================
          * EVENTOS
@@ -715,24 +744,14 @@ const BuscadorUI = (() => {
             // ============================================================
             // ATAJOS NUMÉRICOS 1-5 (con actualización dinámica de stock)
             // ============================================================
-            if (['1', '2', '3', '4', '5'].includes(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
-                const valorActual = input.value;
-
-                // 🚫 NO disparar si el input termina en número (evita conflicto con "arr 5")
-                const terminaEnNumero = /\d\s*$/.test(valorActual);
-                if (terminaEnNumero) return;
-
-                const encontrados = input._ultimosEncontrados || [];
-                const sugerenciasVisibles = sugerenciasPanel.style.display === 'block';
+            
+            if (['1', '2', '3', '4', '5'].includes(e.key) && e.ctrlKey && !e.altKey && !e.metaKey) {
                 const indice = parseInt(e.key, 10) - 1;
+                const encontrados = input._ultimosEncontrados || [];
 
-                if (encontrados.length > indice && sugerenciasVisibles) {
+                if (encontrados.length > indice) {
                     e.preventDefault();
-
-                    const item = encontrados[indice];
-
-                    // 🎯 USAR agregarItemAlCarrito (que actualiza stock dinámico)
-                    agregarItemAlCarrito(item, input.value);
+                    agregarItemAlCarrito(encontrados[indice], input.value);
                     return;
                 }
             }
@@ -783,6 +802,9 @@ const BuscadorUI = (() => {
         // ============================================================
         // FOCUS: mostrar historial de búsquedas
         // ============================================================
+             // 🚫 HISTORIAL DESACTIVADO
+        // Si quieres reactivarlo, descomenta este bloque.
+        /*
         input.addEventListener('focus', () => {
             if (input.value) return;
 
@@ -810,7 +832,7 @@ const BuscadorUI = (() => {
                 });
             });
         });
-
+        */
         // ============================================================
         // BOTÓN CLEAR
         // ============================================================
