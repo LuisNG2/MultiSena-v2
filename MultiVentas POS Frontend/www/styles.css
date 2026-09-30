@@ -859,6 +859,16 @@ background: #cbd5e1;
 color: var(--text-muted);
 cursor: not-allowed;
 }
+
+.productos.lista .producto .agregar:active:not(:disabled) {
+    transform: scale(0.95);
+    transition: transform 0.08s ease;
+}
+
+.productos.lista .producto .agregar {
+    /* Asegurar que la transición esté definida */
+    transition: background 0.15s ease, transform 0.08s ease;
+}
 /* ============================================================
 9. VENTAS / CARRITO
 ============================================================ */

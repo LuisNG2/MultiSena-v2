@@ -322,6 +322,15 @@ function cargarVista(idVista) {
             BuscadorUI.init();
         }
     }, 150);
+
+    // 🆕 Refrescar stock después de un momento al cambiar de vista
+    if (idVista === 'ventas') {
+        setTimeout(() => {
+            if (typeof refrescarStockCatalogo === 'function') {
+                refrescarStockCatalogo();
+            }
+        }, 150);
+    }
 }
 
 /* ============================================================
@@ -376,6 +385,7 @@ async function cargarProductosDesdeAPI() {
                     data-sku="${escapeHtml(sku)}"
                     data-categoria="${escapeHtml(p.categoriaNombre || '')}"      ← 🆕 ESTA LÍNEA
                     data-stock="${p.stockActual}"
+                    data-stock-base="${p.stockActual}"
                     data-veces-vendido="${p.vecesVendido || 0}">
                     <div class="prod-info">
                         <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
@@ -383,7 +393,7 @@ async function cargarProductosDesdeAPI() {
                     </div>
                     <div class="prod-precio">${precioFmt}</div>
                     <div class="prod-stock" style="color:${stockColor};">
-                        Stock: ${p.stockActual}
+                        ${agotado ? '⛔ Agotado' : `📦 ${p.stockActual} disponibles`}
                     </div>
                     <button class="btn agregar" ${agotado ? 'disabled' : ''}>
                         ${agotado ? 'Agotado' : '+ Agregar'}
@@ -392,8 +402,14 @@ async function cargarProductosDesdeAPI() {
             `;
         }).join('');
 
+       // 🆕 Aplicar filtro si había búsqueda activa
         if (estado.terminoBusqueda) {
             filtrarCatalogo(estado.terminoBusqueda);
+        }
+
+        // 🆕 Refrescar el stock para descontar lo que ya está en los carritos
+        if (typeof refrescarStockCatalogo === 'function') {
+            refrescarStockCatalogo();
         }
 
             poblarFiltroCategorias(productos);
@@ -480,9 +496,15 @@ function initVentas() {
         return;
     }
 
-    if (estado.productos.length === 0) {
-        cargarProductosDesdeAPI();
-    }
+    // 🆕 Siempre recargar productos al entrar a la vista (para tener stock fresco)
+    cargarProductosDesdeAPI();
+    
+    // 🆕 Y refrescar el stock después de un momento (por si hay carritos guardados)
+    setTimeout(() => {
+        if (typeof refrescarStockCatalogo === 'function') {
+            refrescarStockCatalogo();
+        }
+    }, 500);
 
     if (estado._ventasInited) {
         crearVentaUI('venta1', 1);
@@ -579,6 +601,7 @@ function cerrarTabConConfirmacion(tabEl) {
             estado.carritos[id] = [];
             renderCarrito(id);
             guardarEstado();
+            refrescarStockCatalogo();
             toast('Venta 1 limpiada');
         }
         return;
@@ -876,6 +899,7 @@ function crearVentaUI(idVenta, numero) {
 
     renderCarrito(idVenta);
     actualizarConteos();
+    refrescarStockCatalogo();
 }
 
 function crearVentaNueva() {
@@ -910,6 +934,7 @@ function activarPestaña(id) {
     renderCarrito(id);
     guardarEstado();
     actualizarConteos();
+    refrescarStockCatalogo(); 
 }
 
 function cerrarPestaña(id) {
@@ -924,6 +949,7 @@ function cerrarPestaña(id) {
     }
     guardarEstado();
     actualizarConteos();
+    refrescarStockCatalogo();
 }
 
 function numeroDesdeId(idVenta) {
@@ -937,21 +963,169 @@ function numeroDesdeId(idVenta) {
 
 function agregarProducto(idVenta, { idProducto, nombre, precio, sku, stock }) {
     const carrito = estado.carritos[idVenta] || (estado.carritos[idVenta] = []);
+
+    // 🆕 Calcular stock disponible real (contando TODOS los carritos)
+    const reservado = stockReservadoEnCarritos(sku);
+    const stockTotalBD = stock || 0;
+    const disponible = Math.max(0, stockTotalBD - reservado);
+
     const item = carrito.find(x => x.sku === sku);
 
     if (item) {
-        if (stock != null && item.cantidad >= stock) {
-            toast(`Stock insuficiente. Solo hay ${stock} disponibles.`, 'error');
+        // Ya está en este carrito
+        if (disponible <= 0) {
+            toast(`Stock insuficiente. Solo hay ${stockTotalBD} y ya están reservados.`, 'error');
             return;
         }
         item.cantidad += 1;
     } else {
-        carrito.push({ idProducto, sku, nombre, precio, cantidad: 1, stock: stock || 0 });
+        // Nuevo item en este carrito
+        if (disponible <= 0) {
+            toast(`Stock insuficiente. Solo hay ${stockTotalBD} y ya están reservados.`, 'error');
+            return;
+        }
+        carrito.push({
+            idProducto,
+            sku,
+            nombre,
+            precio,
+            cantidad: 1,
+            stock: stockTotalBD   // stock total de la BD
+        });
     }
 
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
+    refrescarStockCatalogo();   // 🆕
+}
+
+/* ==================== STOCK DINÁMICO ==================== */
+
+/**
+ * Calcula cuántas unidades de un producto están reservadas en TODOS los carritos.
+ * @param {string} sku - SKU del producto
+ * @returns {number} Cantidad reservada
+ */
+/**
+ * Calcula cuántas unidades de un producto están reservadas en TODOS los carritos.
+ * Robusta contra: Proxies, SKUs numéricos/string, carritos corruptos.
+ * @param {string|number} sku - SKU del producto
+ * @returns {number} Cantidad reservada
+ */
+function stockReservadoEnCarritos(sku) {
+    if (sku == null) return 0;
+
+    // Normalizar el SKU a string para comparación consistente
+    const skuBuscado = String(sku).trim();
+    if (!skuBuscado) return 0;
+
+    let total = 0;
+
+    try {
+        const carritos = estado.carritos || {};
+
+        for (const ventaId in carritos) {
+            const carrito = carritos[ventaId];
+            if (!carrito) continue;
+
+            // Convertir a array (funciona con Proxy, arrays nativos, y hasta iterables)
+            let items = [];
+            try {
+                if (Array.isArray(carrito)) {
+                    items = carrito;
+                } else if (typeof carrito[Symbol.iterator] === 'function') {
+                    items = Array.from(carrito);
+                } else if (typeof carrito.length === 'number') {
+                    items = Array.from(carrito);
+                }
+            } catch (e) {
+                console.warn(`⚠️ stockReservadoEnCarritos: carrito ${ventaId} no accesible`, e);
+                continue;
+            }
+
+            // Buscar el item por SKU (comparando como strings)
+            for (const item of items) {
+                if (!item || item.sku == null) continue;
+
+                const itemSku = String(item.sku).trim();
+                if (itemSku === skuBuscado) {
+                    const cantidad = parseInt(item.cantidad, 10) || 0;
+                    total += cantidad;
+                }
+            }
+        }
+    } catch (e) {
+        console.error('❌ stockReservadoEnCarritos error:', e);
+        return 0;
+    }
+
+    return total;
+}
+/**
+ * Calcula el stock disponible real de un producto.
+ * = stock en BD - stock en todos los carritos
+ * @param {object} producto - { sku, stockActual }
+ * @returns {number} Stock disponible (nunca negativo)
+ */
+function stockDisponible(producto) {
+    const sku = producto.sku || producto.codigoInterno;
+    if (!sku) return producto.stockActual || 0;
+    const reservado = stockReservadoEnCarritos(sku);
+    return Math.max(0, (producto.stockActual || 0) - reservado);
+}
+
+/**
+ * Refresca el stock mostrado en TODAS las tarjetas del catálogo.
+ * Se llama cada vez que cambia cualquier carrito.
+ */
+function refrescarStockCatalogo() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    contenedor.querySelectorAll('.producto').forEach(card => {
+        const sku = card.dataset.sku;
+        const stockBase = parseInt(card.dataset.stockBase || card.dataset.stock, 10) || 0;
+
+        // Calcular stock disponible
+        const reservado = stockReservadoEnCarritos(sku);
+        const disponible = Math.max(0, stockBase - reservado);
+
+        // Actualizar texto de stock
+        const stockEl = card.querySelector('.prod-stock');
+        if (stockEl) {
+            if (disponible <= 0) {
+                stockEl.textContent = '⛔ Sin stock';
+                stockEl.style.color = '#dc2626';
+                stockEl.style.background = 'rgba(220, 38, 38, 0.10)';
+            } else {
+                stockEl.textContent = `📦 ${disponible} disponibles`;
+                const color = disponible <= 10 ? '#dc2626' : '#16a34a';
+                stockEl.style.color = color;
+                stockEl.style.background = disponible <= 10
+                    ? 'rgba(220, 38, 38, 0.10)'
+                    : 'rgba(22, 163, 74, 0.10)';
+            }
+        }
+
+        // Actualizar botón
+        const btn = card.querySelector('.agregar');
+        if (btn) {
+            if (disponible <= 0) {
+                btn.disabled = true;
+                btn.textContent = 'Sin stock';
+            } else {
+                btn.disabled = false;
+                btn.textContent = '+ Agregar';
+            }
+        }
+    });
+
+    // 🆕 Notificar a BuscadorUI que el HTML cambió
+    // (para que actualice su htmlOriginal y no restaure versiones viejas)
+    if (typeof BuscadorUI !== 'undefined' && typeof BuscadorUI.refrescarHtml === 'function') {
+        BuscadorUI.refrescarHtml();
+    }
 }
 
 function actualizarCantidad(idVenta, sku, tipo) {
@@ -960,12 +1134,29 @@ function actualizarCantidad(idVenta, sku, tipo) {
     if (!item) return;
 
     if (tipo === 'mas') {
-        if (item.stock != null && item.cantidad >= item.stock) {
-            toast(`Stock máximo alcanzado (${item.stock})`, 'error');
+        // 🆕 Validar contra el stock REAL disponible (restando otros carritos)
+        const stockTotalBD = item.stock != null ? item.stock : 0;
+
+        // Calcular cuánto está reservado en OTROS carritos (excluyendo este)
+        let reservadoOtros = 0;
+        for (const vid in estado.carritos) {
+            if (vid === idVenta) continue;   // saltar el carrito actual
+            const c = estado.carritos[vid] || [];
+            const i = c.find(x => x.sku === sku);
+            if (i) reservadoOtros += i.cantidad;
+        }
+
+        const disponibleParaEste = stockTotalBD - reservadoOtros;
+
+        // Si la nueva cantidad superaría el disponible → bloquear
+        if (item.cantidad + 1 > disponibleParaEste) {
+            toast(`Stock máximo alcanzado. Disponible: ${disponibleParaEste} (${reservadoOtros} en otros carritos)`, 'error');
             return;
         }
+
         item.cantidad += 1;
     }
+
     if (tipo === 'menos') {
         item.cantidad = Math.max(1, item.cantidad - 1);
     }
@@ -973,6 +1164,7 @@ function actualizarCantidad(idVenta, sku, tipo) {
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
+    refrescarStockCatalogo();
 }
 
 function eliminarProducto(idVenta, sku) {
@@ -995,6 +1187,7 @@ function eliminarProducto(idVenta, sku) {
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
+    refrescarStockCatalogo();
 
     toast(`🗑 "${item.nombre}" eliminado del carrito`, 'success');
 }
@@ -1297,6 +1490,7 @@ async function confirmarVenta(e) {
     estado.carritos[ventaId] = [];
     renderCarrito(ventaId);
     actualizarConteos();
+    refrescarStockCatalogo();
 
     estado.historial.push({
         idVenta: venta.idVenta,
@@ -4157,6 +4351,173 @@ function renderAccesosRapidos() {
 
     console.log(`⚡ Accesos rápidos renderizados: ${accesosValidos.join(', ')}`);
 }
+
+/* ============================================================
+   AUTO-REFRESCO DE STOCK (v2 — con instrumentación de arrays)
+   ============================================================ */
+(function setupAutoRefrescoStock() {
+    if (typeof Proxy === 'undefined') {
+        console.warn('⚠️ Proxy no soportado');
+        return;
+    }
+
+    // Debounce
+    let timeoutRefresco = null;
+    function refrescarDebounced() {
+        if (timeoutRefresco) clearTimeout(timeoutRefresco);
+        timeoutRefresco = setTimeout(() => {
+            if (typeof refrescarStockCatalogo === 'function') {
+                refrescarStockCatalogo();
+            }
+        }, 30);
+    }
+
+    // 🆕 Exponer globalmente para que otros módulos la usen
+    window._refrescarStockDebounced = refrescarDebounced;
+
+    // Envolver un array de carrito con Proxy
+    function envolverCarrito(arr) {
+        return new Proxy(arr, {
+            set(target, prop, value) {
+                const result = Reflect.set(target, prop, value);
+                // Si es un índice numérico (nuevo item o reemplazo)
+                if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+                    refrescarDebounced();
+                }
+                // Si es un cambio en el array (length, etc)
+                if (prop === 'length') {
+                    refrescarDebounced();
+                }
+                return result;
+            },
+            deleteProperty(target, prop) {
+                const result = Reflect.deleteProperty(target, prop);
+                refrescarDebounced();
+                return result;
+            }
+        });
+    }
+
+    // 🆕 Envolver los items (para detectar `item.cantidad += 1`)
+    function envolverItem(item, carritoArray) {
+        return new Proxy(item, {
+            set(target, prop, value) {
+                const result = Reflect.set(target, prop, value);
+                // Si cambia la cantidad, refrescar
+                if (prop === 'cantidad') {
+                    refrescarDebounced();
+                }
+                return result;
+            }
+        });
+    }
+
+    // Envolver un array completo (cada item + el array en sí)
+    function envolverCarritoCompleto(arr) {
+        // Envolver cada item del array
+        for (let i = 0; i < arr.length; i++) {
+            arr[i] = envolverItem(arr[i]);
+        }
+        return envolverCarrito(arr);
+    }
+
+    // Envolver todos los carritos existentes
+    Object.keys(estado.carritos).forEach(vid => {
+        estado.carritos[vid] = envolverCarritoCompleto(estado.carritos[vid]);
+    });
+
+    // Envolver el objeto `carritos` para detectar nuevos carritos
+    const carritosOriginal = estado.carritos;
+    estado.carritos = new Proxy(carritosOriginal, {
+        set(target, prop, value) {
+            // Si es un array nuevo → envolverlo
+            if (Array.isArray(value)) {
+                value = envolverCarritoCompleto(value);
+            }
+            const result = Reflect.set(target, prop, value);
+            refrescarDebounced();
+            return result;
+        },
+        get(target, prop) {
+            // Al leer un carrito, si no está envuelto, envolverlo
+            const valor = target[prop];
+            if (Array.isArray(valor) && !valor._esProxy) {
+                const envuelto = envolverCarritoCompleto(valor);
+                envuelto._esProxy = true;
+                target[prop] = envuelto;
+                return envuelto;
+            }
+            return valor;
+        },
+        deleteProperty(target, prop) {
+            const result = Reflect.deleteProperty(target, prop);
+            refrescarDebounced();
+            return result;
+        }
+    });
+
+    console.log('✅ Auto-refresco de stock v2 activado');
+})();
+
+// 🆕 Comando de diagnóstico
+window._diagStock = () => {
+    const cards = document.querySelectorAll('#catalogoProductos .producto');
+    console.log(`📦 Tarjetas: ${cards.length}`);
+    let problemas = 0;
+
+    cards.forEach(c => {
+        const sku = c.dataset.sku;
+        const base = parseInt(c.dataset.stockBase || '0', 10);
+        const reservado = stockReservadoEnCarritos(sku);
+        const esperado = Math.max(0, base - reservado);
+        const visibleTxt = c.querySelector('.prod-stock')?.textContent || '';
+        const visibleMatch = visibleTxt.match(/\d+/);
+        const visible = visibleMatch ? parseInt(visibleMatch[0], 10) : 0;
+
+        const ok = esperado === visible;
+        if (!ok) problemas++;
+
+        if (reservado > 0 || !ok) {
+            console.log(
+                `  ${ok ? '✅' : '❌'} ${sku} | base: ${base} | reservado: ${reservado} | esperado: ${esperado} | visible: "${visibleTxt.trim()}"`
+            );
+        }
+    });
+
+    if (problemas === 0) {
+        console.log('✅ Todo consistente');
+    } else {
+        console.warn(`⚠️ ${problemas} tarjetas desactualizadas`);
+    }
+};
+
+window._verificarConsistenciaStock = () => {
+    const cards = document.querySelectorAll('#catalogoProductos .producto');
+    const problemas = [];
+
+    cards.forEach(c => {
+        const sku = c.dataset.sku;
+        const base = parseInt(c.dataset.stockBase || '0', 10);
+        const reservado = stockReservadoEnCarritos(sku);
+        const esperado = Math.max(0, base - reservado);
+        const visibleTxt = c.querySelector('.prod-stock')?.textContent || '';
+        const visibleMatch = visibleTxt.match(/\d+/);
+        const visible = visibleMatch ? parseInt(visibleMatch[0], 10) : 0;
+
+        if (esperado !== visible) {
+            problemas.push({ sku, base, reservado, esperado, visible });
+        }
+    });
+
+    if (problemas.length === 0) {
+        console.log('✅ Todo consistente. Todas las tarjetas están actualizadas.');
+    } else {
+        console.warn(`⚠️ ${problemas.length} tarjetas desactualizadas:`);
+        console.table(problemas);
+        console.log('💡 Ejecutando refrescarStockCatalogo()...');
+        refrescarStockCatalogo();
+    }
+};
 
 /* ============================================================
    25. INICIALIZACIÓN

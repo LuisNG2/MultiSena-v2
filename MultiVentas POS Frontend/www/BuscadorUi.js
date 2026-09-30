@@ -179,6 +179,11 @@ const BuscadorUI = (() => {
             contenedor.innerHTML = htmlOriginal;
             aplicandoFiltro = false;
             if (contador) contador.textContent = '';
+
+            // 🆕 Refrescar stock también al restaurar
+            if (typeof refrescarStockCatalogo === 'function') {
+                setTimeout(() => refrescarStockCatalogo(), 0);
+            }
         }
 
         function filaAItem(fila) {
@@ -327,6 +332,10 @@ const BuscadorUI = (() => {
                 mostrarSugerencias(encontrados.slice(0, 5));
             } else {
                 ocultarSugerencias();
+            }
+            // 🆕 Refrescar el stock dinámico después de aplicar el filtro
+            if (typeof refrescarStockCatalogo === 'function') {
+                setTimeout(() => refrescarStockCatalogo(), 0);
             }
         }
 
@@ -526,7 +535,7 @@ const BuscadorUI = (() => {
          * Agrega un item al carrito SUMANDO cantidades si ya existe.
          * Respeta el stock disponible y muestra UN SOLO toast.
          */
-        function agregarItemAlCarrito(item, textoQuery) {
+                function agregarItemAlCarrito(item, textoQuery) {
             if (!item || !item._el) return;
 
             const elemento = item._el;
@@ -539,30 +548,37 @@ const BuscadorUI = (() => {
                 return;
             }
 
-            // Extraer cantidad del query (ej: "20 arr" → 20)
+            // Extraer cantidad del query
             const { cantidad: cantidadSolicitada } = (typeof Buscador.extraerCantidad === 'function')
                 ? Buscador.extraerCantidad(textoQuery || input.value)
                 : { cantidad: 1 };
 
             const ventaId = estado.pestañaActiva || 'venta1';
             const sku = elemento.dataset.sku;
-            const stock = parseInt(elemento.dataset.stock || '0', 10);
+            const stock = parseInt(elemento.dataset.stockBase || elemento.dataset.stock || '0', 10);
             const nombre = item.nombre || 'Producto';
 
             if (!sku || !estado.carritos[ventaId]) return;
 
-            // 🔍 Ver si ya está en el carrito
+            // 🔍 Ver si ya está en el carrito actual
             const itemCarrito = estado.carritos[ventaId].find(i => i.sku === sku);
             const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
 
-            // 🧮 Calcular cuánto se puede agregar realmente
-            const espacioDisponible = stock - cantidadActual;
+            // 🆕 Calcular cuánto está reservado en TODOS los carritos
+            let reservadoTotal = 0;
+            for (const vid in estado.carritos) {
+                const c = estado.carritos[vid] || [];
+                const i = c.find(x => x.sku === sku);
+                if (i) reservadoTotal += i.cantidad;
+            }
+
+            // Espacio disponible = stock BD - reservado en OTROS carritos
+            const espacioDisponible = stock - (reservadoTotal - cantidadActual);
             const cantidadFinal = Math.min(cantidadSolicitada, espacioDisponible);
 
-            // Casos de error
             if (espacioDisponible <= 0) {
                 if (typeof toast === 'function') {
-                    toast(`"${nombre}" ya tiene todo el stock en el carrito (${stock})`, 'error');
+                    toast(`"${nombre}" ya tiene todo el stock en otros carritos (${stock})`, 'error');
                 }
                 input.value = '';
                 aplicar('');
@@ -572,12 +588,10 @@ const BuscadorUI = (() => {
 
             const recortado = cantidadFinal < cantidadSolicitada;
 
-            // 🆕 Agregar con la lógica nativa del carrito
+            // Sumar o crear el item en el carrito
             if (itemCarrito) {
-                // SUMAR a la cantidad existente
                 itemCarrito.cantidad += cantidadFinal;
             } else {
-                // Crear nuevo item
                 const idProducto = parseInt(elemento.dataset.idProducto, 10);
                 const precio = parseFloat(elemento.dataset.precio) || 0;
 
@@ -595,13 +609,14 @@ const BuscadorUI = (() => {
             if (typeof renderCarrito === 'function') renderCarrito(ventaId);
             if (typeof guardarEstado === 'function') guardarEstado();
             if (typeof actualizarConteos === 'function') actualizarConteos();
+            if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
 
-            // 🔔 UN SOLO toast
+            // Toast
             if (typeof toast === 'function') {
                 const total = cantidadActual + cantidadFinal;
 
                 if (recortado) {
-                    toast(`⚠️ "${nombre}" — stock máximo alcanzado (${stock}). Total en carrito: ${total}`, 'error');
+                    toast(`⚠️ "${nombre}" — stock máximo (${stock}). Total: ${total}`, 'error');
                 } else if (cantidadFinal > 1) {
                     if (cantidadActual > 0) {
                         toast(`✅ +${cantidadFinal}× "${nombre}" (total: ${total})`);
@@ -696,21 +711,16 @@ const BuscadorUI = (() => {
                 e.preventDefault();
                 return;
             }
-
+        
             // ============================================================
-            // ATAJOS NUMÉRICOS 1-5 (solo si el input NO termina en número)
-            // ============================================================
-                        // ============================================================
-            // ATAJOS NUMÉRICOS 1-5 (solo si el input NO termina en número)
+            // ATAJOS NUMÉRICOS 1-5 (con actualización dinámica de stock)
             // ============================================================
             if (['1', '2', '3', '4', '5'].includes(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 const valorActual = input.value;
 
                 // 🚫 NO disparar si el input termina en número (evita conflicto con "arr 5")
                 const terminaEnNumero = /\d\s*$/.test(valorActual);
-                if (terminaEnNumero) {
-                    return;   // Dejar pasar la tecla normalmente
-                }
+                if (terminaEnNumero) return;
 
                 const encontrados = input._ultimosEncontrados || [];
                 const sugerenciasVisibles = sugerenciasPanel.style.display === 'block';
@@ -718,11 +728,14 @@ const BuscadorUI = (() => {
 
                 if (encontrados.length > indice && sugerenciasVisibles) {
                     e.preventDefault();
-                    agregarItemAlCarrito(encontrados[indice], input.value);
+
+                    const item = encontrados[indice];
+
+                    // 🎯 USAR agregarItemAlCarrito (que actualiza stock dinámico)
+                    agregarItemAlCarrito(item, input.value);
                     return;
                 }
             }
-
             // ============================================================
             // ESCAPE
             // ============================================================
