@@ -8,9 +8,12 @@
 // 2. Construimos la URL base dinámica
 //const API_BASE_URL = 'http://${ipGuardada}/api';
 
-
+const API_BASE_URL = (() => {
+    const host = window.location.hostname;
+    return `http://${host}:5014/api`;
+})();
 //const API_BASE_URL = 'http://192.168.101.4:5014/api';
-const API_BASE_URL = 'http://localhost:5014/api';
+//const API_BASE_URL = 'http://localhost:5014/api';
 //const API_URL = 'http://192.168.101.4:5014/api'; 
 //const API_BASE_URL = 'http://192.168.101.4:5014/api';
 

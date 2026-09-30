@@ -50,6 +50,8 @@ const Escaner = (() => {
     }
 
     function manejarKeydown(e) {
+        // 🆕 Validación defensiva: si no hay e.key, ignorar
+        if (!e || !e.key) return;
         // Si el foco está en un input de texto y el usuario está escribiendo lento → ignorar
         const ahora = Date.now();
         const deltaMs = tiempoUltimaTecla ? (ahora - tiempoUltimaTecla) : 0;
