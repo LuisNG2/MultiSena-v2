@@ -1066,7 +1066,7 @@ user-select: none;
 .modal {
 display: none;
 position: fixed;
-z-index: 1000;
+z-index: 1300;
 left: 0;
 top: 0;
 width: 100%;
@@ -1333,7 +1333,7 @@ color: white;
 font-size: 28px;
 border: none;
 box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-z-index: 1200;
+z-index: 1000;
 align-items: center;
 justify-content: center;
 cursor: pointer;
@@ -1440,7 +1440,7 @@ border-bottom: 1px solid #334155;
 position: fixed;
 inset: 0;
 background: rgba(0, 0, 0, 0.5);
-z-index: 1100;
+z-index: 1190;
 opacity: 0;
 transition: opacity 0.25s ease;
 pointer-events: none;
@@ -2972,4 +2972,15 @@ transition: transform .25s ease; z-index: 260;
     .buscador-hint code {
         font-size: 10px;
     }
+}
+
+#cartFab {
+    /* ... resto del CSS ... */
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+#cartFab.oculto {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.8);
 }

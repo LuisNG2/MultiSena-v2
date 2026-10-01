@@ -178,6 +178,9 @@ function showModal(modal) {
     if (!modal) return;
     modal.style.display = 'flex';
     requestAnimationFrame(() => modal.classList.add('open'));
+
+    const fab = document.getElementById('cartFab');
+    if (fab) fab.classList.add('oculto');   // 🆕 clase en vez de display
 }
 
 function hideModal(modal) {
@@ -185,6 +188,12 @@ function hideModal(modal) {
     modal.classList.remove('open');
     setTimeout(() => {
         if (!modal.classList.contains('open')) modal.style.display = 'none';
+
+        const fab = document.getElementById('cartFab');
+        const hayModalesAbiertos = document.querySelectorAll('.modal.open').length > 0;
+        if (fab && !hayModalesAbiertos) {
+            fab.classList.remove('oculto');
+        }
     }, 250);
 }
 
@@ -1467,12 +1476,15 @@ function destacarProductoEnCarrito(sku) {
 let _ventaIdEnProceso = null;
 
 async function finalizarVenta(ventaId) {
+    // 🆕 Declaración del carrito (esto faltaba)
     const carrito = estado.carritos[ventaId] || [];
+
     if (carrito.length === 0) {
         toast('El carrito está vacío', 'error');
         return;
     }
 
+    // Verificar que todos los items tengan idProducto
     const sinId = carrito.filter(i => !i.idProducto);
     if (sinId.length > 0) {
         toast('Hay productos sin ID válido. Recarga el catálogo.', 'error');
@@ -1481,14 +1493,28 @@ async function finalizarVenta(ventaId) {
 
     _ventaIdEnProceso = ventaId;
 
+    // 🆕 Cerrar el drawer si está abierto
+    const drawer = document.getElementById('cartDrawer');
+    const backdrop = document.getElementById('cartDrawerBackdrop');
+    if (drawer && drawer.classList.contains('open')) {
+        drawer.classList.remove('open');
+        if (backdrop) backdrop.classList.remove('visible');
+        document.body.style.overflow = '';
+    }
+
+    // Cargar clientes en el dropdown
     await cargarClientesEnModal();
+
+    // Actualizar resumen
     actualizarResumenModal();
 
+    // Mostrar modal
     const modal = document.getElementById('modalFinalizarVenta');
     showModal(modal);
 
+    // Listener del descuento (para actualizar total en vivo)
     const inputDescuento = document.getElementById('finDescuento');
-    inputDescuento.oninput = actualizarResumenModal;
+    if (inputDescuento) inputDescuento.oninput = actualizarResumenModal;
 }
 
 async function cargarClientesEnModal() {
