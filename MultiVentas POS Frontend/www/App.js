@@ -64,7 +64,11 @@ const estado = {
     _ventasInited: false,
     _clientesInited: false,
     _creatingVenta: false,
-    _cargandoProductos: false
+    _cargandoProductos: false,
+
+    // 🆕 Flags del caché del top
+    _ultimaCargaTop: 0,
+    _productosCacheInvalidado: false
 };
 
 const STORAGE_KEYS = {
@@ -342,11 +346,16 @@ function cargarVista(idVista) {
     }
 }
 
+// 🆕 Invalidar caché del top
+estado._productosCacheInvalidado = true;
 /* ============================================================
    6. PRODUCTOS DESDE LA API
    ============================================================ */
 
+/* ==================== PRODUCTOS DESDE LA API (TOP 1000) ==================== */
+
 async function cargarProductosDesdeAPI() {
+    // Si ya hay una carga en curso, no dispares otra
     if (estado._cargandoProductos) {
         console.log('⏳ Carga de productos ya en curso, se omite duplicado');
         return;
@@ -361,11 +370,30 @@ async function cargarProductosDesdeAPI() {
     const contenedor = document.getElementById('catalogoProductos');
     if (!contenedor) return;
 
+    // ============================================================
+    // 🆕 CACHÉ DEL TOP: solo recargar si:
+    //    - No hay productos en memoria
+    //    - El caché fue invalidado (venta, edición, eliminación)
+    //    - Pasaron 5 minutos desde la última carga
+    // ============================================================
+    const CACHE_TTL = 5 * 60 * 1000;   // 5 minutos
+    const ahora = Date.now();
+    const ultimaCarga = estado._ultimaCargaTop || 0;
+    const cacheExpirado = (ahora - ultimaCarga) > CACHE_TTL;
+
+    if (estado.productos.length > 0 &&
+        !estado._productosCacheInvalidado &&
+        !cacheExpirado) {
+        console.log(`📦 Usando top cacheado (${estado.productos.length} productos, ${Math.round((CACHE_TTL - (ahora - ultimaCarga)) / 1000)}s para expirar)`);
+        return;
+    }
+
     estado._cargandoProductos = true;
     contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">Cargando productos...</p>`;
 
     try {
-        const resp = await api.get('/Productos?page=1&pageSize=200');
+        // 🆕 Cargar los 1000 productos más relevantes del backend
+        const resp = await api.get('/Productos/top?limite=1000');
 
         if (!resp.ok) {
             contenedor.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar productos.</p>`;
@@ -375,11 +403,16 @@ async function cargarProductosDesdeAPI() {
         const productos = (resp.data || []).filter(p => p.estado === 'Activo');
         estado.productos = productos;
 
+        // 🆕 Resetear flags de caché
+        estado._ultimaCargaTop = ahora;
+        estado._productosCacheInvalidado = false;
+
         if (productos.length === 0) {
             contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos activos.</p>`;
             return;
         }
 
+        // Renderizar el catálogo en el orden que devuelve el backend
         contenedor.innerHTML = productos.map(p => {
             const precioFmt = formato(p.precioVenta);
             const sku = p.sku || p.codigoInterno;
@@ -392,13 +425,125 @@ async function cargarProductosDesdeAPI() {
                     data-nombre="${escapeHtml(p.nombre)}"
                     data-precio="${p.precioVenta}"
                     data-sku="${escapeHtml(sku)}"
-                    data-categoria="${escapeHtml(p.categoriaNombre || '')}"      ← 🆕 ESTA LÍNEA
                     data-stock="${p.stockActual}"
                     data-stock-base="${p.stockActual}"
-                    data-veces-vendido="${p.vecesVendido || 0}">
+                    data-categoria="${escapeHtml(p.categoriaNombre || '')}">
+
                     <div class="prod-info">
                         <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
-                        <span class="prod-sku">SKU: ${escapeHtml(sku)}</span>
+                        <span class="prod-sku">${escapeHtml(sku)}</span>
+                    </div>
+
+                    <div class="prod-precio">${precioFmt}</div>
+
+                    <div class="prod-stock" style="color:${stockColor};">
+                        ${agotado ? '⛔ Agotado' : `📦 ${p.stockActual} disponibles`}
+                    </div>
+
+                    <button class="btn agregar" ${agotado ? 'disabled' : ''}>
+                        ${agotado ? 'Agotado' : '+ Agregar'}
+                    </button>
+                </div>
+            `;
+        }).join('');
+
+        // Aplicar filtro de búsqueda si había uno activo
+        if (estado.terminoBusqueda) {
+            filtrarCatalogo(estado.terminoBusqueda);
+        }
+
+        // Refrescar stock dinámico
+        if (typeof refrescarStockCatalogo === 'function') {
+            refrescarStockCatalogo();
+        }
+
+        console.log(`✅ ${productos.length} productos TOP cargados desde la API`);
+
+    } catch (err) {
+        console.error('❌ Error al cargar productos:', err);
+        contenedor.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar productos.</p>`;
+    } finally {
+        estado._cargandoProductos = false;
+    }
+}
+
+/* ==================== CARGAR TODOS LOS PRODUCTOS ==================== */
+
+async function cargarTodosLosProductos() {
+    const token = localStorage.getItem('pos_token');
+    if (!token) {
+        toast('Debes iniciar sesión', 'error');
+        return;
+    }
+
+    if (!confirm('Esto cargará TODOS los productos. Puede tardar unos segundos. ¿Continuar?')) return;
+
+    if (estado._cargandoProductos) {
+        toast('Ya hay una carga en curso', 'error');
+        return;
+    }
+
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    estado._cargandoProductos = true;
+    contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">Cargando todos los productos...</p>`;
+
+    try {
+        // Cargar en lotes de 500
+        let todos = [];
+        let page = 1;
+        const pageSize = 500;
+
+        while (true) {
+            const resp = await api.get(`/Productos?page=${page}&pageSize=${pageSize}`);
+            if (!resp.ok) break;
+
+            const lote = resp.data || [];
+            if (lote.length === 0) break;
+
+            todos = todos.concat(lote.filter(p => p.estado === 'Activo'));
+            page++;
+
+            if (lote.length < pageSize) break;
+
+            // Límite de seguridad
+            if (page > 100) {
+                console.warn('⚠️ Límite de páginas alcanzado');
+                break;
+            }
+        }
+
+        if (todos.length === 0) {
+            contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos activos.</p>`;
+            toast('No hay productos para mostrar', 'error');
+            return;
+        }
+
+        // Guardar en memoria + resetear flags de caché
+        estado.productos = todos;
+        estado._ultimaCargaTop = Date.now();
+        estado._productosCacheInvalidado = false;
+
+        // Re-renderizar
+        contenedor.innerHTML = todos.map(p => {
+            const precioFmt = formato(p.precioVenta);
+            const sku = p.sku || p.codigoInterno;
+            const stockColor = p.stockActual <= p.stockMinimo ? '#dc2626' : '#16a34a';
+            const agotado = p.stockActual <= 0;
+
+            return `
+                <div class="producto"
+                    data-id-producto="${p.idProducto}"
+                    data-nombre="${escapeHtml(p.nombre)}"
+                    data-precio="${p.precioVenta}"
+                    data-sku="${escapeHtml(sku)}"
+                    data-stock="${p.stockActual}"
+                    data-stock-base="${p.stockActual}"
+                    data-categoria="${escapeHtml(p.categoriaNombre || '')}">
+                    <div class="prod-info">
+                        <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
+                        <span class="prod-sku">${escapeHtml(sku)}</span>
                     </div>
                     <div class="prod-precio">${precioFmt}</div>
                     <div class="prod-stock" style="color:${stockColor};">
@@ -411,24 +556,36 @@ async function cargarProductosDesdeAPI() {
             `;
         }).join('');
 
-       // 🆕 Aplicar filtro si había búsqueda activa
+        // Aplicar filtro de búsqueda activo
         if (estado.terminoBusqueda) {
             filtrarCatalogo(estado.terminoBusqueda);
         }
 
-        // 🆕 Refrescar el stock para descontar lo que ya está en los carritos
+        // Refrescar stock dinámico
         if (typeof refrescarStockCatalogo === 'function') {
             refrescarStockCatalogo();
         }
 
-            poblarFiltroCategorias(productos);
-        
+        console.log(`✅ ${todos.length} productos cargados (todos)`);
+        toast(`✅ ${todos.length} productos cargados`);
 
-        console.log(`✅ ${productos.length} productos cargados desde la API`);
+    } catch (err) {
+        console.error('❌ Error al cargar todos los productos:', err);
+        contenedor.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar productos.</p>`;
+        toast('Error al cargar productos', 'error');
     } finally {
         estado._cargandoProductos = false;
     }
 }
+
+// Enganchar el botón
+document.addEventListener('DOMContentLoaded', () => {
+    const btnTodos = document.getElementById('btnCargarTodos');
+    if (btnTodos && !btnTodos._attached) {
+        btnTodos._attached = true;
+        btnTodos.addEventListener('click', cargarTodosLosProductos);
+    }
+});
 
 // ============================================================
 // Poblar el select de categorías con las categorías únicas
@@ -1621,11 +1778,15 @@ async function confirmarVenta(e) {
     });
     guardarEstado();
 
+    // 🆕 Forzar recarga del top (los más vendidos pueden haber cambiado)
+    estado._productosCacheInvalidado = true;
+
+    // Refrescar catálogo (los stocks cambiaron + nuevo orden del top)
     await cargarProductosDesdeAPI();
 
-    form.reset();
-    _ventaIdEnProceso = null;
-}
+        form.reset();
+        _ventaIdEnProceso = null;
+    }
 
 function setupFinalizarVentaModal() {
     const modal = document.getElementById('modalFinalizarVenta');
@@ -3106,6 +3267,8 @@ async function guardarProducto(e) {
     hideModal(document.getElementById('modalProducto'));
 
     window._productosCache = null;
+    // 🆕 Invalidar caché del top
+    stado._productosCacheInvalidado = true;
 
     await initInventario();
     await cargarProductosDesdeAPI();
@@ -3114,6 +3277,8 @@ async function guardarProducto(e) {
         await initCategorias();
     }
 }
+
+
 
 async function eliminarProductoDelInventario(idProducto) {
     if (!confirm('¿Eliminar este producto?')) return;
@@ -3124,11 +3289,11 @@ async function eliminarProductoDelInventario(idProducto) {
     toast('✅ Producto eliminado');
     
     // 🆕 Invalidar caché
-    window._productosCache = null;
+    estado._productosCacheInvalidado = true;
     
     await initInventario();
     await cargarProductosDesdeAPI();
-    
+
     // 🆕 Si estamos en categorías, refrescar
     if (document.getElementById('vista-categorias')?.hidden === false) {
         await initCategorias();
@@ -5354,6 +5519,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 🆕 Renderizar accesos rápidos dinámicos
     setTimeout(() => renderAccesosRapidos(), 300);
+
+    document.addEventListener('DOMContentLoaded', () => {
+    // ... código existente ...
+
+    // 🆕 Enganchar el botón "Cargar todos"
+    const btnCargarTodos = document.getElementById('btnCargarTodos');
+    if (btnCargarTodos && !btnCargarTodos._attached) {
+        btnCargarTodos._attached = true;
+        btnCargarTodos.addEventListener('click', cargarTodosLosProductos);
+    }
+
+        console.log('✅ App.js cargado correctamente');
+    });
 
     console.log('✅ App.js cargado correctamente');
 });

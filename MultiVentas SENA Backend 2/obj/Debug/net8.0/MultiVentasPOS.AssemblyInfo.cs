@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MultiVentasPOS")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0258da1136607e73434b133553da521a91833874")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+82b7fcd3390933fa5372f42ac4c51ca15e732493")]
 [assembly: System.Reflection.AssemblyProductAttribute("MultiVentasPOS")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MultiVentasPOS")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

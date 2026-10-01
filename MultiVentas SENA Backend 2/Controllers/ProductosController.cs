@@ -26,6 +26,8 @@ namespace MultiVentasPOS.Controllers
             _logger = logger;
         }
 
+        
+
         // ============================================================
         // GET: api/Productos?page=1&pageSize=50
         // ============================================================
@@ -420,6 +422,110 @@ namespace MultiVentasPOS.Controllers
 
             return Ok(results);
         }
+
+      [HttpGet("top")]
+            [Authorize]
+            public async Task<ActionResult<IEnumerable<ProductoDto>>> GetTopProductos(
+                [FromQuery] int limite = 1000)
+            {
+                limite = Math.Clamp(limite, 10, 2000);
+
+                var hace30Dias = DateTime.UtcNow.AddDays(-30);
+
+                // -------- 1. IDs con ventas + score ordenado (en SQL) --------
+                var scoresRaw = await _context.DetallesVenta
+                    .AsNoTracking()
+                    .Where(d => d.Venta != null && d.Venta.Estado == "Completada")
+                    .GroupBy(d => d.IdProducto)
+                    .Select(g => new
+                    {
+                        IdProducto = g.Key,
+                        Frecuencia = g.Select(d => d.IdVenta).Distinct().Count(),
+                        CantidadTotal = g.Sum(d => d.Cantidad),
+                        CantidadReciente = g
+                            .Where(d => d.Venta!.FechaVenta >= hace30Dias)
+                            .Sum(d => (int?)d.Cantidad) ?? 0
+                    })
+                    .ToListAsync();
+
+                // Ordenar por score en memoria (ya son pocos: < 20k)
+                var idsTopConVentas = scoresRaw
+                    .OrderByDescending(s =>
+                        (s.Frecuencia * 0.5) +
+                        (s.CantidadTotal * 0.3 / 10.0) +
+                        (s.CantidadReciente * 0.2 / 5.0))
+                    .Select(s => s.IdProducto)
+                    .ToList();
+
+                // -------- 2. Cargar los productos del top --------
+                var dictScore = scoresRaw.ToDictionary(s => s.IdProducto);
+
+                var productosConVentas = await _context.Productos
+                    .AsNoTracking()
+                    .Include(p => p.Categoria)
+                    .Where(p => p.Estado == "Activo" && idsTopConVentas.Contains(p.IdProducto))
+                    .ToListAsync();
+
+                // Ordenar según score
+                var productosConVentasOrdenados = productosConVentas
+                    .OrderByDescending(p =>
+                    {
+                        if (!dictScore.TryGetValue(p.IdProducto, out var s)) return 0;
+                        return (s.Frecuencia * 0.5) +
+                            (s.CantidadTotal * 0.3 / 10.0) +
+                            (s.CantidadReciente * 0.2 / 5.0);
+                    })
+                    .ToList();
+
+                // -------- 3. Rellenar con productos sin ventas hasta llegar al límite --------
+                var resultado = productosConVentasOrdenados;
+
+                if (resultado.Count < limite)
+                {
+                    var faltantes = limite - resultado.Count;
+                    var idsYaIncluidos = resultado.Select(p => p.IdProducto).ToHashSet();
+
+                    var productosSinVentas = await _context.Productos
+                        .AsNoTracking()
+                        .Include(p => p.Categoria)
+                        .Where(p => p.Estado == "Activo" && !idsYaIncluidos.Contains(p.IdProducto))
+                        .OrderByDescending(p => p.VecesVendido)
+                        .ThenByDescending(p => p.FechaCreacion)
+                        .Take(faltantes)
+                        .ToListAsync();
+
+                    resultado.AddRange(productosSinVentas);
+                }
+
+                // -------- 4. Mapear a DTO --------
+                var dtos = resultado.Select(p => new ProductoDto
+                {
+                    IdProducto = p.IdProducto,
+                    CodigoInterno = p.CodigoInterno,
+                    Sku = p.Sku,
+                    Nombre = p.Nombre,
+                    IdCategoria = p.IdCategoria,
+                    CategoriaNombre = p.Categoria?.Nombre,
+                    Proveedor = p.Proveedor,
+                    PrecioVenta = p.PrecioVenta,
+                    CostoBase = p.CostoBase,
+                    StockActual = p.StockActual,
+                    StockMinimo = p.StockMinimo,
+                    ImpuestoPorcentaje = p.ImpuestoPorcentaje,
+                    VecesVendido = p.VecesVendido,
+                    Estado = p.Estado,
+                    FechaCreacion = p.FechaCreacion,
+                    FechaActualizacion = p.FechaActualizacion
+                }).ToList();
+
+                _logger.LogInformation(
+                    "Top productos: {ConVentas} con ventas, {SinVentas} sin ventas, total {Total}",
+                    productosConVentasOrdenados.Count,
+                    resultado.Count - productosConVentasOrdenados.Count,
+                    dtos.Count);
+
+                return Ok(dtos);
+            }
 
                 // ============================================================
         // GET: api/Productos/generar-codigo?nombre=xxx&idCategoria=1
