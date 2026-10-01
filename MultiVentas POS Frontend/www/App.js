@@ -1847,10 +1847,6 @@ function renderVentaIndividual(v) {
     `;
 }
 
-function setupTablaHistorialListener() {
-    // Ya no se usa — los listeners van en renderHistorial
-}
-
 async function verDetalleVenta(idVenta) {
     const modal = document.getElementById('modalDetalleVenta');
     const cont = document.getElementById('detalleVentaContenido');
