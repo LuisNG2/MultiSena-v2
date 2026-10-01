@@ -1819,7 +1819,11 @@ function renderGrupoDia(anio, mes, d) {
 }
 function renderVentaIndividual(v) {
     const esAnulada = v.estado === 'Anulada';
-    const hora = new Date(v.fechaVenta).toLocaleTimeString('es-CO', {
+    
+    // Solución: Si la fecha no termina en Z, se la agregamos para indicarle a JS que es UTC
+    const fechaString = v.fechaVenta.endsWith('Z') ? v.fechaVenta : `${v.fechaVenta}Z`;
+    
+    const hora = new Date(fechaString).toLocaleTimeString('es-CO', {
         timeZone: 'America/Bogota',
         hour: '2-digit',
         minute: '2-digit',
@@ -1846,6 +1850,7 @@ function renderVentaIndividual(v) {
         </div>
     `;
 }
+
 
 async function verDetalleVenta(idVenta) {
     const modal = document.getElementById('modalDetalleVenta');

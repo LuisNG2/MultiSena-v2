@@ -800,6 +800,29 @@ const BuscadorUI = (() => {
         });
 
         // ============================================================
+// SELECCIÓN POR CLIC EN SUGERENCIAS PANEL
+// ============================================================
+sugerenciasPanel.addEventListener('click', (e) => {
+    // Buscamos si el clic ocurrió dentro de un item de sugerencia
+    const item = e.target.closest('.sugerencia-item');
+    if (!item) return;
+
+    // Obtenemos todos los items para calcular el índice del elemento clickeado
+    const items = Array.from(sugerenciasPanel.querySelectorAll('.sugerencia-item'));
+    const indice = items.indexOf(item);
+
+    const encontrados = input._ultimosEncontrados || [];
+
+    // Verificamos que el índice exista dentro del rango de los atajos (0 a 4)
+    if (indice >= 0 && indice < 5 && encontrados.length > indice) {
+        e.preventDefault();
+        // Ejecuta exactamente la misma lógica que tu atajo Ctrl + 1-5
+        agregarItemAlCarrito(encontrados[indice], input.value);
+    }
+});
+
+
+        // ============================================================
         // FOCUS: mostrar historial de búsquedas
         // ============================================================
              // 🚫 HISTORIAL DESACTIVADO
