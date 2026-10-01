@@ -1647,81 +1647,208 @@ function setupFinalizarVentaModal() {
 
 let _historialCache = [];
 
+/* ============================================================
+   12. HISTORIAL DE VENTAS — AGRUPADO (Año → Mes → Día)
+   ============================================================ */
+
+let _historialAgrupadoCache = null;
+let _histAnioActual = null;
+
 async function renderHistorial() {
-    const tbody = document.querySelector('#tablaHistorial tbody');
-    if (!tbody) return;
+    const contenedor = document.getElementById('historialAgrupado');
+    const infoEl = document.getElementById('histTotalInfo');
+    const selectAnio = document.getElementById('histAnio');
+    if (!contenedor) return;
 
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:20px;color:#64748b;">Cargando...</td></tr>`;
+    contenedor.innerHTML = `<p style="text-align:center;padding:20px;color:#64748b;">Cargando...</p>`;
 
+    // ---- Parámetros ----
+    const estado = document.getElementById('histEstado')?.value || '';
+    const buscar = document.getElementById('histBuscar')?.value.trim() || '';
+    const desde = document.getElementById('histDesde')?.value || '';
+    const hasta = document.getElementById('histHasta')?.value || '';
+    const anioSeleccionado = selectAnio?.value || '';
+
+    // ---- Construir query ----
     const params = new URLSearchParams();
-    const desde = document.getElementById('histDesde')?.value;
-    const hasta = document.getElementById('histHasta')?.value;
-    const estadoSel = document.getElementById('histEstado')?.value;
+    if (anioSeleccionado) params.append('anio', anioSeleccionado);
+    if (estado) params.append('estado', estado);
+    if (buscar) params.append('buscar', buscar);
 
-    if (desde) params.append('desde', desde);
-    if (hasta) params.append('hasta', hasta + 'T23:59:59');
-    if (estadoSel) params.append('estado', estadoSel);
-    params.append('pageSize', '100');
-
-    const resp = await api.get(`/Ventas?${params.toString()}`);
+    // ---- Llamar al endpoint agrupado ----
+    const resp = await api.get(`/Ventas/agrupado?${params.toString()}`);
     if (!resp.ok) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#dc2626;padding:20px;">Error al cargar ventas</td></tr>`;
+        contenedor.innerHTML = `<div class="hist-vacio"><span class="icono">⚠️</span>Error al cargar el historial</div>`;
         return;
     }
 
-    _historialCache = resp.data || [];
+    const data = resp.data;
+    _historialAgrupadoCache = data;
 
-    const buscar = (document.getElementById('histBuscar')?.value || '').toLowerCase().trim();
-    const filtradas = buscar
-        ? _historialCache.filter(v => (v.codigoFactura || '').toLowerCase().includes(buscar))
-        : _historialCache;
+    // ---- Poblar selector de años (solo primera vez) ----
+    if (selectAnio && !selectAnio._cargado) {
+        const anios = data.aniosDisponibles || [];
+        selectAnio.innerHTML = '<option value="">Últimos 12 meses</option>' +
+            anios.map(a => `<option value="${a}">${a}</option>`).join('');
+        selectAnio._cargado = true;
+    }
 
-    if (filtradas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:20px;">No hay ventas registradas</td></tr>`;
+    // ---- Aplicar filtro de fechas en cliente (opcional) ----
+    let agrupado = data.agrupado || [];
+    if (desde || hasta) {
+        const fDesde = desde ? new Date(desde) : null;
+        const fHasta = hasta ? new Date(hasta + 'T23:59:59') : null;
+
+        agrupado = agrupado.map(g => ({
+            ...g,
+            meses: g.meses.map(m => ({
+                ...m,
+                dias: m.dias.map(d => ({
+                    ...d,
+                    ventas: d.ventas.filter(v => {
+                        const f = new Date(v.fechaVenta);
+                        if (fDesde && f < fDesde) return false;
+                        if (fHasta && f > fHasta) return false;
+                        return true;
+                    })
+                })).filter(d => d.ventas.length > 0)
+            })).filter(m => m.dias.length > 0)
+        })).filter(g => g.meses.length > 0);
+    }
+
+    // ---- Info global ----
+    const totalVentas = agrupado.reduce((s, g) => s + g.totalVentas, 0);
+    const totalMonto = agrupado.reduce((s, g) => s + g.totalMonto, 0);
+    if (infoEl) {
+        infoEl.textContent = `${totalVentas} ventas · ${formato(totalMonto)}`;
+    }
+
+    // ---- Sin resultados ----
+    if (agrupado.length === 0) {
+        contenedor.innerHTML = `
+            <div class="hist-vacio">
+                <span class="icono">🔍</span>
+                <div style="font-weight:600;margin-bottom:4px;">No hay ventas que coincidan</div>
+                <div style="font-size:12px;">Prueba con otros filtros</div>
+            </div>`;
         return;
     }
 
-    tbody.innerHTML = filtradas.map(v => {
-        const fecha = formatearFechaColombia(v.fechaVenta);
-        const esAnulada = v.estado === 'Anulada';
-        const estadoColor = esAnulada ? '#dc2626' : '#16a34a';
-        const estadoBg = esAnulada ? 'rgba(220,38,38,0.15)' : 'rgba(22,163,74,0.15)';
+    // ---- Render acordeones ----
+    contenedor.innerHTML = agrupado.map(g => renderGrupoAnio(g)).join('');
 
-        return `
-            <tr data-id-venta="${v.idVenta}">
-                <td><strong>${escapeHtml(v.codigoFactura || '-')}</strong></td>
-                <td>${fecha}</td>
-                <td>${escapeHtml(v.clienteNombre || 'Anónimo')}</td>
-                <td>${escapeHtml(v.usuarioNombre || '-')}</td>
-                <td style="text-align:center;">${v.cantidadItems}</td>
-                <td style="text-align:right;">${formato(v.totalFinal)}</td>
-                <td>${escapeHtml(v.metodoPago)}</td>
-                <td>
-                    <span style="color:${estadoColor}; background:${estadoBg}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600;">
-                        ${escapeHtml(v.estado)}
-                    </span>
-                </td>
-                <td>
-                    <button class="btn small" data-accion="ver" data-id="${v.idVenta}">👁 Ver</button>
-                </td>
-            </tr>
-        `;
-    }).join('');
+    // ---- Listeners de expand/collapse ----
+    contenedor.querySelectorAll('.hist-grupo-header, .hist-subgrupo-header').forEach(h => {
+        h.addEventListener('click', (e) => {
+            // No colapsar si el click fue en un botón de acción
+            if (e.target.closest('button')) return;
+            const padre = h.parentElement;
+            padre.classList.toggle('abierto');
+        });
+    });
 
-    setupTablaHistorialListener();
+    // ---- Listener de "Ver detalle" ----
+    contenedor.querySelectorAll('button[data-accion="ver"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            verDetalleVenta(parseInt(btn.dataset.id, 10));
+        });
+    });
+}
+
+function renderGrupoAnio(g) {
+    const abierto = _histAnioActual === g.anio;
+    return `
+        <div class="hist-grupo ${abierto ? 'abierto' : ''}" data-anio="${g.anio}">
+            <div class="hist-grupo-header">
+                <div class="hist-grupo-titulo">
+                    <span class="flecha">▶</span>
+                    📅 ${g.anio}
+                </div>
+                <div class="hist-grupo-meta">
+                    <span class="badge-cantidad">${g.totalVentas} ventas</span>
+                    <span class="badge-total">${formato(g.totalMonto)}</span>
+                </div>
+            </div>
+            <div class="hist-grupo-contenido">
+                ${g.meses.map(m => renderGrupoMes(g.anio, m)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderGrupoMes(anio, m) {
+    return `
+        <div class="hist-subgrupo">
+            <div class="hist-subgrupo-header">
+                <div class="hist-subgrupo-titulo">
+                    <span class="flecha">▶</span>
+                    📆 ${m.mesNombre}
+                </div>
+                <div class="hist-grupo-meta">
+                    <span class="badge-cantidad">${m.totalVentas}</span>
+                    <span class="badge-total">${formato(m.totalMonto)}</span>
+                </div>
+            </div>
+            <div class="hist-subgrupo-contenido">
+                ${m.dias.map(d => renderGrupoDia(anio, m.mes, d)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderGrupoDia(anio, mes, d) {
+    const fechaTxt = `${String(d.dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${anio}`;
+    return `
+        <div class="hist-subgrupo">
+            <div class="hist-subgrupo-header">
+                <div class="hist-subgrupo-titulo">
+                    <span class="flecha">▶</span>
+                    🗓️ ${fechaTxt}
+                </div>
+                <div class="hist-grupo-meta">
+                    <span class="badge-cantidad">${d.totalVentas}</span>
+                    <span class="badge-total">${formato(d.totalMonto)}</span>
+                </div>
+            </div>
+            <div class="hist-subgrupo-contenido">
+                ${d.ventas.map(v => renderVentaIndividual(v)).join('')}
+            </div>
+        </div>
+    `;
+}
+function renderVentaIndividual(v) {
+    const esAnulada = v.estado === 'Anulada';
+    const hora = new Date(v.fechaVenta).toLocaleTimeString('es-CO', {
+        timeZone: 'America/Bogota',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+    });
+
+    return `
+        <div class="hist-venta">
+            <span class="v-factura" title="${escapeHtml(v.codigoFactura || '-')}">
+                ${escapeHtml(v.codigoFactura || '-')}
+            </span>
+            <span class="v-cliente">
+                ${escapeHtml(v.clienteNombre || 'Anónimo')}
+                <span class="v-hora">· ${hora}</span>
+            </span>
+            <span class="v-items">${v.cantidadItems} ítems</span>
+            <span class="v-total">${formato(v.totalFinal)}</span>
+            <span class="v-estado ${esAnulada ? 'anulada' : 'completada'}">
+                ${escapeHtml(v.estado)}
+            </span>
+            <div class="v-acciones">
+                <button class="btn small" data-accion="ver" data-id="${v.idVenta}" title="Ver detalle">👁</button>
+            </div>
+        </div>
+    `;
 }
 
 function setupTablaHistorialListener() {
-    const tbody = document.querySelector('#tablaHistorial tbody');
-    if (!tbody || tbody._listenerAttached) return;
-    tbody._listenerAttached = true;
-
-    tbody.addEventListener('click', (e) => {
-        const btn = e.target.closest('button[data-accion="ver"]');
-        if (!btn) return;
-        const idVenta = parseInt(btn.dataset.id, 10);
-        verDetalleVenta(idVenta);
-    });
+    // Ya no se usa — los listeners van en renderHistorial
 }
 
 async function verDetalleVenta(idVenta) {
@@ -1809,7 +1936,6 @@ async function verDetalleVenta(idVenta) {
 
 async function anularVenta(idVenta) {
     if (!confirm('¿Estás seguro de que deseas anular esta venta? El stock se devolverá.')) return;
-
     const motivo = prompt('Motivo de anulación (opcional):') || '';
 
     const btnAnular = document.getElementById('btnAnularVenta');
@@ -1817,64 +1943,101 @@ async function anularVenta(idVenta) {
     btnAnular.textContent = '⏳ Anulando...';
 
     const resp = await api.put(`/Ventas/${idVenta}/anular`, { motivo });
-
     btnAnular.disabled = false;
     btnAnular.textContent = '🚫 Anular Venta';
 
     if (!resp.ok) return;
 
     toast('✅ Venta anulada correctamente');
-
     hideModal(document.getElementById('modalDetalleVenta'));
-    renderHistorial();
+    await renderHistorial();          // 👈 ahora renderiza acordeones
     await cargarProductosDesdeAPI();
 }
 
 function setupHistorialListeners() {
     const btnFiltrar = document.getElementById('btnHistFiltrar');
     const btnLimpiar = document.getElementById('btnHistLimpiar');
-    const btnCerrar = document.getElementById('cerrarModalDetalleVenta');
-    const btnCerrar2 = document.getElementById('btnCerrarDetalleVenta');
-    const btnAnular = document.getElementById('btnAnularVenta');
+    const btnExpandir = document.getElementById('btnHistExpandir');
+    const btnContraer = document.getElementById('btnHistContraer');
+    const selectAnio = document.getElementById('histAnio');
 
-    if (btnFiltrar && !btnFiltrar._listenerAttached) {
-        btnFiltrar._listenerAttached = true;
-        btnFiltrar.addEventListener('click', renderHistorial);
-    }
-
-    if (btnLimpiar && !btnLimpiar._listenerAttached) {
-        btnLimpiar._listenerAttached = true;
-        btnLimpiar.addEventListener('click', () => {
-            document.getElementById('histDesde').value = '';
-            document.getElementById('histHasta').value = '';
-            document.getElementById('histEstado').value = '';
-            document.getElementById('histBuscar').value = '';
+    if (btnFiltrar && !btnFiltrar._attached) {
+        btnFiltrar._attached = true;
+        btnFiltrar.addEventListener('click', () => {
+            _histAnioActual = null;
             renderHistorial();
         });
     }
 
-    if (btnCerrar && !btnCerrar._listenerAttached) {
-        btnCerrar._listenerAttached = true;
-        btnCerrar.addEventListener('click', () => hideModal(document.getElementById('modalDetalleVenta')));
+    if (btnLimpiar && !btnLimpiar._attached) {
+        btnLimpiar._attached = true;
+        btnLimpiar.addEventListener('click', () => {
+            ['histDesde', 'histHasta', 'histBuscar'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            const est = document.getElementById('histEstado');
+            if (est) est.value = '';
+            const anio = document.getElementById('histAnio');
+            if (anio) anio.value = '';
+            _histAnioActual = null;
+            renderHistorial();
+        });
     }
 
-    if (btnCerrar2 && !btnCerrar2._listenerAttached) {
-        btnCerrar2._listenerAttached = true;
-        btnCerrar2.addEventListener('click', () => hideModal(document.getElementById('modalDetalleVenta')));
+    if (btnExpandir && !btnExpandir._attached) {
+        btnExpandir._attached = true;
+        btnExpandir.addEventListener('click', () => {
+            document.querySelectorAll('#historialAgrupado .hist-grupo, #historialAgrupado .hist-subgrupo')
+                .forEach(el => el.classList.add('abierto'));
+        });
     }
 
-    if (btnAnular && !btnAnular._listenerAttached) {
-        btnAnular._listenerAttached = true;
+    if (btnContraer && !btnContraer._attached) {
+        btnContraer._attached = true;
+        btnContraer.addEventListener('click', () => {
+            document.querySelectorAll('#historialAgrupado .hist-grupo, #historialAgrupado .hist-subgrupo')
+                .forEach(el => el.classList.remove('abierto'));
+        });
+    }
+
+    if (selectAnio && !selectAnio._attached) {
+        selectAnio._attached = true;
+        selectAnio.addEventListener('change', (e) => {
+            _histAnioActual = parseInt(e.target.value, 10) || null;
+            renderHistorial();
+        });
+    }
+
+    // Buscador con debounce
+    const inputBuscar = document.getElementById('histBuscar');
+    if (inputBuscar && !inputBuscar._attached) {
+        inputBuscar._attached = true;
+        let t = null;
+        inputBuscar.addEventListener('input', () => {
+            clearTimeout(t);
+            t = setTimeout(() => renderHistorial(), 400);
+        });
+    }
+
+    // Botones de modal detalle
+    const btnCerrar = document.getElementById('cerrarModalDetalleVenta');
+    const btnCerrar2 = document.getElementById('btnCerrarDetalleVenta');
+    const btnAnular = document.getElementById('btnAnularVenta');
+
+    [btnCerrar, btnCerrar2].forEach(b => {
+        if (b && !b._attached) {
+            b._attached = true;
+            b.addEventListener('click', () => hideModal(document.getElementById('modalDetalleVenta')));
+        }
+    });
+
+    if (btnAnular && !btnAnular._attached) {
+        btnAnular._attached = true;
         btnAnular.addEventListener('click', () => {
             const id = parseInt(btnAnular.dataset.id, 10);
             if (id) anularVenta(id);
         });
-    }
-
-    const inputBuscar = document.getElementById('histBuscar');
-    if (inputBuscar && !inputBuscar._listenerAttached) {
-        inputBuscar._listenerAttached = true;
-        inputBuscar.addEventListener('input', () => renderHistorial());
     }
 }
 
@@ -3727,11 +3890,49 @@ function setupSidebar() {
         });
     }
 
-    const clearBtn = document.getElementById('btnClearStorage');
-    if (clearBtn && !clearBtn._listenerAttached) {
-        clearBtn._listenerAttached = true;
-        clearBtn.addEventListener('click', borrarEstadoManual);
+    // ============================================================
+    // SIDEBAR MÓVIL: tap para expandir/colapsar
+    // ============================================================
+    const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+
+    if (!sidebarEl._tapAttached) {
+        sidebarEl._tapAttached = true;
+
+        sidebarEl.addEventListener('touchstart', (e) => {
+            if (!isMobile()) return;
+            const target = e.target.closest('button, a');
+            if (!sidebarEl.classList.contains('expandido')) {
+                sidebarEl.classList.add('expandido');
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchstart', (e) => {
+            if (!isMobile()) return;
+            if (!sidebarEl.contains(e.target) && sidebarEl.classList.contains('expandido')) {
+                sidebarEl.classList.remove('expandido');
+            }
+        }, { passive: true });
+
+        document.addEventListener('click', (e) => {
+            if (!isMobile()) return;
+            if (!sidebarEl.contains(e.target) && sidebarEl.classList.contains('expandido')) {
+                sidebarEl.classList.remove('expandido');
+            }
+        });
     }
+
+    // Limpiar estado al cambiar de breakpoint
+    let _lastIsMobile = window.matchMedia('(max-width: 900px)').matches;
+    window.addEventListener('resize', () => {
+        const isMobile = window.matchMedia('(max-width: 900px)').matches;
+        if (isMobile !== _lastIsMobile) {
+            sidebarEl.classList.remove('active', 'expandido');
+            document.getElementById('overlay')?.classList.remove('active');
+            _lastIsMobile = isMobile;
+        }
+    });
+   
 }
 
 function resaltarMenuActivo(idVista) {
@@ -3945,7 +4146,7 @@ function initSplitter() {
          const fab = document.getElementById('cartFab');
             const drawer = document.querySelector('.cart-drawer');
             const backdrop = document.querySelector('.cart-drawer-backdrop');
-            const esDesktop = window.innerWidth > 760 && !document.documentElement.classList.contains('split-catalogo-full');
+            const esDesktop = window.innerWidth > 900 && !document.documentElement.classList.contains('split-catalogo-full');
 
             if (fab) {
                 fab.style.display = esDesktop ? 'none' : 'flex';
@@ -3959,7 +4160,7 @@ function initSplitter() {
 
             // Cerrar el drawer y el FAB al cambiar de tamaño
             window.addEventListener('resize', () => {
-                const esDesktop = window.innerWidth > 760;
+                const esDesktop = window.innerWidth > 900;
 
                 if (esDesktop) {
                     // Ocultar FAB
@@ -4630,7 +4831,7 @@ function onScanCatalogo(codigo, encontrados, input) {
 
 function mostrarBotonCarritoSiAplica(vistaId) {
     const existente = document.getElementById('cartFab');
-    const esDesktop = window.innerWidth > 760 && !document.documentElement.classList.contains('split-catalogo-full');
+    const esDesktop = window.innerWidth > 900 && !document.documentElement.classList.contains('split-catalogo-full');
 
     // 🆕 En desktop, SIEMPRE ocultar el FAB
     if (esDesktop) {
@@ -4672,7 +4873,7 @@ function conectarFabCarrito() {
 
     cartFabEl.addEventListener('click', () => {
         // Verificar si estamos en móvil
-        const esMobile = window.innerWidth <= 760 
+        const esMobile = window.innerWidth <= 900 
                       || document.documentElement.classList.contains('split-catalogo-full');
 
         if (esMobile) {
@@ -4804,25 +5005,6 @@ function filtrarAccesosRapidosPorRol() {
     });
 
     console.log(`✅ ${document.querySelectorAll('.quick-action[data-roles]:not([style*="display: none"])').length} accesos rápidos visibles`);
-}
-function registrarUsoVista(idVista) {
-    try {
-        const uso = JSON.parse(localStorage.getItem('pos_uso_vistas') || '{}');
-        uso[idVista] = (uso[idVista] || 0) + 1;
-        localStorage.setItem('pos_uso_vistas', JSON.stringify(uso));
-    } catch (e) { /* ignorar */ }
-}
-
-function obtenerTop3Vistas() {
-    try {
-        const uso = JSON.parse(localStorage.getItem('pos_uso_vistas') || '{}');
-        return Object.entries(uso)
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, 3)
-            .map(([vista]) => vista);
-    } catch (e) {
-        return [];
-    }
 }
 
 // ============================================================

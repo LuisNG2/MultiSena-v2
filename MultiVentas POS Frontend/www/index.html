@@ -340,63 +340,67 @@
   </section>
 
   <!-- ==================== HISTORIAL ==================== -->
-  <section id="vista-historial" class="vista" hidden>
-    <div class="panel">
+<section id="vista-historial" class="vista" hidden>
+  <div class="panel">
+    <div class="hist-header">
       <h2>📜 Historial de Ventas</h2>
-
-      <!-- Filtros -->
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-bottom:16px;">
-        <div class="form-row" style="flex:1; min-width:140px;">
-          <label>Desde:</label>
-          <input type="date" id="histDesde">
-        </div>
-        <div class="form-row" style="flex:1; min-width:140px;">
-          <label>Hasta:</label>
-          <input type="date" id="histHasta">
-        </div>
-        <div class="form-row" style="flex:1; min-width:140px;">
-          <label>Estado:</label>
-          <select id="histEstado">
-            <option value="">Todos</option>
-            <option value="Completada">Completada</option>
-            <option value="Anulada">Anulada</option>
-          </select>
-        </div>
-        <div class="form-row" style="flex:1; min-width:180px;">
-          <label>Buscar factura:</label>
-          <input type="text"
-              id="histBuscar"
-              placeholder="FAC-..."
-              data-buscador
-              data-tabla="tablaHistorial">
-        </div>
-        <button class="btn" id="btnHistFiltrar">🔍 Filtrar</button>
-        <button class="btn ghost" id="btnHistLimpiar">Limpiar</button>
-      </div>
-
-      <!-- Tabla -->
-      <div style="overflow-x:auto;">
-        <table class="tabla-carrito" id="tablaHistorial">
-          <thead>
-            <tr>
-              <th>Factura</th>
-              <th>Fecha</th>
-              <th>Cliente</th>
-              <th>Usuario</th>
-              <th style="text-align:center;">Items</th>
-              <th style="text-align:right;">Total</th>
-              <th>Método</th>
-              <th>Estado</th>
-              <th style="width: 120px; text-align:center;">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td colspan="9" style="text-align:center; padding:20px; color:#64748b;">Cargando...</td></tr>
-          </tbody>
-        </table>
+      <div class="hist-anio-selector">
+        <label for="histAnio">Año:</label>
+        <select id="histAnio" class="filtro-categoria">
+          <option value="">Últimos 12 meses</option>
+        </select>
+        <span id="histTotalInfo" class="hist-total-info"></span>
       </div>
     </div>
-  </section>
+
+    <!-- Filtros -->
+    <div class="hist-filtros">
+      <div class="form-row">
+        <label>Desde:</label>
+        <input type="date" id="histDesde">
+      </div>
+      <div class="form-row">
+        <label>Hasta:</label>
+        <input type="date" id="histHasta">
+      </div>
+      <div class="form-row">
+        <label>Estado:</label>
+        <select id="histEstado">
+          <option value="">Todos</option>
+          <option value="Completada">Completada</option>
+          <option value="Anulada">Anulada</option>
+        </select>
+      </div>
+      <div class="form-row hist-filtros-buscar">
+        <label>Buscar:</label>
+        <input type="text" id="histBuscar" placeholder="FAC-, cliente, usuario...">
+      </div>
+      <div class="hist-filtros-acciones">
+        <button class="btn" id="btnHistFiltrar">🔍 Filtrar</button>
+        <button class="btn ghost" id="btnHistLimpiar">Limpiar</button>
+        <button class="btn ghost" id="btnHistExpandir" title="Expandir todo">⬇️</button>
+        <button class="btn ghost" id="btnHistContraer" title="Contraer todo">⬆️</button>
+      </div>
+    </div>
+
+    <!-- Contenedor agrupado (acordeones año → mes → día) -->
+    <div id="historialAgrupado" class="historial-agrupado">
+      <p style="text-align:center; padding:20px; color:#64748b;">Cargando...</p>
+    </div>
+
+    <!-- Tabla oculta (compatibilidad con BuscadorUI) -->
+    <table class="tabla-carrito" id="tablaHistorial" style="display:none;">
+      <thead>
+        <tr>
+          <th>Factura</th><th>Fecha</th><th>Cliente</th>
+          <th>Usuario</th><th>Items</th><th>Total</th>
+          <th>Método</th><th>Estado</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
 
   <!-- ==================== INVENTARIO ==================== -->
   <section id="vista-inventario" class="vista" hidden>

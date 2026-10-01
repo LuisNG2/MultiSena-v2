@@ -132,6 +132,146 @@ namespace MultiVentasPOS.Controllers
             return Ok(venta);
         }
 
+        // ============================================================
+                // GET: api/Ventas/agrupado?anio=2026
+                // Devuelve las ventas agrupadas por año → mes → día.
+                // Si no se pasa año, devuelve los últimos 12 meses agrupados.
+                // ============================================================
+                [HttpGet("agrupado")]
+                public async Task<IActionResult> GetAgrupado(
+                    [FromQuery] int? anio = null,
+                    [FromQuery] int? mes = null,
+                    [FromQuery] string? estado = null,
+                    [FromQuery] string? buscar = null)
+                {
+                    // ------------------------------------------------------------
+                    // 1. Determinar rango de fechas
+                    // ------------------------------------------------------------
+                    DateTime desde;
+                    DateTime hasta = DateTime.UtcNow;
+
+                    if (anio.HasValue)
+                    {
+                        desde = new DateTime(anio.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                        hasta = new DateTime(anio.Value, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+
+                        if (mes.HasValue)
+                        {
+                            desde = new DateTime(anio.Value, mes.Value, 1, 0, 0, 0, DateTimeKind.Utc);
+                            hasta = desde.AddMonths(1).AddSeconds(-1);
+                        }
+                    }
+                    else
+                    {
+                        // Últimos 12 meses (híbrido)
+                        hasta = DateTime.UtcNow;
+                        desde = new DateTime(hasta.Year, hasta.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-11);
+                    }
+
+                    // ------------------------------------------------------------
+                    // 2. Query base
+                    // ------------------------------------------------------------
+                    var query = _context.Ventas
+                        .AsNoTracking()
+                        .Include(v => v.Usuario)
+                        .Include(v => v.Cliente)
+                        .Where(v => v.FechaVenta >= desde && v.FechaVenta <= hasta);
+
+                    if (!string.IsNullOrWhiteSpace(estado))
+                        query = query.Where(v => v.Estado == estado);
+
+                    if (!string.IsNullOrWhiteSpace(buscar))
+                    {
+                        var b = buscar.Trim().ToLower();
+                        query = query.Where(v =>
+                            (v.CodigoFactura != null && v.CodigoFactura.ToLower().Contains(b)) ||
+                            (v.Cliente != null && v.Cliente.Nombre.ToLower().Contains(b)) ||
+                            (v.Usuario != null && v.Usuario.Nombre.ToLower().Contains(b)));
+                    }
+
+                    // ------------------------------------------------------------
+                    // 3. Traer datos crudos (proyectados para eficiencia)
+                    // ------------------------------------------------------------
+                    var ventas = await query
+                        .OrderByDescending(v => v.FechaVenta)
+                        .Select(v => new
+                        {
+                            v.IdVenta,
+                            v.CodigoFactura,
+                            v.FechaVenta,
+                            v.TotalFinal,
+                            v.MetodoPago,
+                            v.Estado,
+                            ClienteNombre = v.Cliente != null ? v.Cliente.Nombre : null,
+                            UsuarioNombre = v.Usuario != null ? v.Usuario.Nombre : null,
+                            CantidadItems = v.DetallesVenta.Sum(d => d.Cantidad)
+                        })
+                        .ToListAsync();
+
+                    // ------------------------------------------------------------
+                    // 4. Agrupar en memoria (año → mes → día)
+                    // ------------------------------------------------------------
+                    var agrupado = ventas
+                        .GroupBy(v => v.FechaVenta.Year)
+                        .OrderByDescending(g => g.Key)
+                        .Select(gAnio => new
+                        {
+                            anio = gAnio.Key,
+                            totalVentas = gAnio.Count(),
+                            totalMonto = gAnio.Sum(v => v.TotalFinal),
+                            meses = gAnio
+                                .GroupBy(v => v.FechaVenta.Month)
+                                .OrderByDescending(g => g.Key)
+                                .Select(gMes => new
+                                {
+                                    mes = gMes.Key,
+                                    mesNombre = new DateTime(gAnio.Key, gMes.Key, 1)
+                                        .ToString("MMMM", new System.Globalization.CultureInfo("es-CO")),
+                                    totalVentas = gMes.Count(),
+                                    totalMonto = gMes.Sum(v => v.TotalFinal),
+                                    dias = gMes
+                                        .GroupBy(v => v.FechaVenta.Day)
+                                        .OrderByDescending(g => g.Key)
+                                        .Select(gDia => new
+                                        {
+                                            dia = gDia.Key,
+                                            totalVentas = gDia.Count(),
+                                            totalMonto = gDia.Sum(v => v.TotalFinal),
+                                            ventas = gDia.Select(v => new
+                                            {
+                                                v.IdVenta,
+                                                v.CodigoFactura,
+                                                v.FechaVenta,
+                                                v.TotalFinal,
+                                                v.MetodoPago,
+                                                v.Estado,
+                                                v.ClienteNombre,
+                                                v.UsuarioNombre,
+                                                v.CantidadItems
+                                            }).ToList()
+                                        }).ToList()
+                                }).ToList()
+                        })
+                        .ToList();
+
+                    // ------------------------------------------------------------
+                    // 5. Años disponibles (para el selector)
+                    // ------------------------------------------------------------
+                    var aniosDisponibles = await _context.Ventas
+                        .AsNoTracking()
+                        .Select(v => v.FechaVenta.Year)
+                        .Distinct()
+                        .OrderByDescending(y => y)
+                        .ToListAsync();
+
+                    return Ok(new
+                    {
+                        rango = new { desde, hasta },
+                        aniosDisponibles,
+                        agrupado
+                    });
+                }
+
         [HttpPost]
         public async Task<ActionResult<VentaDetalleDto>> Create([FromBody] VentaCreateDto dto)
         {
