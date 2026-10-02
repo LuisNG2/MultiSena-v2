@@ -385,7 +385,7 @@ function initAuth() {
                 }
                  // 🆕 Filtrar accesos rápidos
                 if (typeof filtrarAccesosRapidosPorRol === 'function') {
-                    filtrarAccesosRapidosPorRol();
+                    
                 }
 
                 // 🆕 Renderizar accesos rápidos después del login

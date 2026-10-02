@@ -2,20 +2,10 @@
 // api.js - Cliente HTTP con refresh automático de token
 // ============================================================
 
-// 1. Intentamos obtener la IP guardada por el usuario, si no hay, usamos una por defecto
-//const ipGuardada = localStorage.getItem('api_ip') || 'http://localhost:5014';
-
-// 2. Construimos la URL base dinámica
-//const API_BASE_URL = 'http://${ipGuardada}/api';
-
 const API_BASE_URL = (() => {
     const host = window.location.hostname;
     return `http://${host}:5014/api`;
 })();
-//const API_BASE_URL = 'http://192.168.101.4:5014/api';
-//const API_BASE_URL = 'http://localhost:5014/api';
-//const API_URL = 'http://192.168.101.4:5014/api'; 
-//const API_BASE_URL = 'http://192.168.101.4:5014/api';
 
 const API_TIMEOUT = 15000;
 
@@ -35,10 +25,9 @@ function getAuthHeaders() {
 // ------------------------------------------------------------
 // Intentar renovar el access token usando el refresh token
 // ------------------------------------------------------------
-let _refreshing = null;   // Promise compartida para evitar múltiples refresh simultáneos
+let _refreshing = null;
 
 async function refreshAccessToken() {
-    // Si ya hay un refresh en curso, esperar a ese
     if (_refreshing) return _refreshing;
 
     _refreshing = (async () => {
@@ -58,7 +47,6 @@ async function refreshAccessToken() {
             const newAccess = data.accessToken || data.token;
             if (!newAccess) return null;
 
-            // Guardar nuevos tokens
             localStorage.setItem('pos_token', newAccess);
             if (data.refreshToken) {
                 localStorage.setItem('pos_refresh_token', data.refreshToken);
@@ -79,7 +67,7 @@ async function refreshAccessToken() {
 }
 
 // ------------------------------------------------------------
-// Cerrar sesión (fallback si el refresh falla)
+// Cerrar sesión
 // ------------------------------------------------------------
 function handleUnauthorized() {
     localStorage.removeItem('pos_token');
@@ -120,6 +108,18 @@ async function extractErrorMessage(response) {
 }
 
 // ------------------------------------------------------------
+// Helper: construir respuesta unificada con headers
+// ------------------------------------------------------------
+function buildResponse(ok, status, data, response) {
+    return {
+        ok,
+        status,
+        data,
+        headers: response?.headers || null   // 🆕 siempre expuesto
+    };
+}
+
+// ------------------------------------------------------------
 // FETCH PRINCIPAL con reintento automático en 401
 // ------------------------------------------------------------
 async function apiFetch(endpoint, options = {}, _retry = true) {
@@ -144,41 +144,41 @@ async function apiFetch(endpoint, options = {}, _retry = true) {
             if (_retry) {
                 const newToken = await refreshAccessToken();
                 if (newToken) {
-                    // Reintentar la petición original con el token nuevo
                     return apiFetch(endpoint, options, false);
                 }
             }
-            // Si no se pudo renovar, cerrar sesión
             handleUnauthorized();
-            return { ok: false, status: 401, data: null };
+            return buildResponse(false, 401, null, response);
         }
 
         // 403 → sin permisos
         if (response.status === 403) {
             const msg = 'No tienes permisos para realizar esta acción.';
             if (typeof toast === 'function') toast(msg, 'error');
-            return { ok: false, status: 403, data: { message: msg } };
+            return buildResponse(false, 403, { message: msg }, response);
         }
 
         // 204 → sin body
-        if (response.status === 204) return { ok: true, status: 204, data: null };
+        if (response.status === 204) {
+            return buildResponse(true, 204, null, response);
+        }
 
         // Otros errores
         if (!response.ok) {
             const msg = await extractErrorMessage(response);
             if (typeof toast === 'function') toast(msg, 'error');
-            return { ok: false, status: response.status, data: { message: msg } };
+            return buildResponse(false, response.status, { message: msg }, response);
         }
 
         // 200 OK
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
             const data = await response.json();
-            return { ok: true, status: response.status, data };
+            return buildResponse(true, response.status, data, response);
         }
 
         const text = await response.text();
-        return { ok: true, status: response.status, data: text };
+        return buildResponse(true, response.status, text, response);
 
     } catch (error) {
         clearTimeout(timeoutId);
@@ -186,13 +186,13 @@ async function apiFetch(endpoint, options = {}, _retry = true) {
         if (error.name === 'AbortError') {
             const msg = 'La petición tardó demasiado.';
             if (typeof toast === 'function') toast(msg, 'error');
-            return { ok: false, status: 0, data: { message: msg } };
+            return { ok: false, status: 0, data: { message: msg }, headers: null };
         }
 
         console.error('API Error:', error);
         const msg = 'No se pudo conectar con el servidor.';
         if (typeof toast === 'function') toast(msg, 'error');
-        return { ok: false, status: 0, data: { message: msg } };
+        return { ok: false, status: 0, data: { message: msg }, headers: null };
     }
 }
 

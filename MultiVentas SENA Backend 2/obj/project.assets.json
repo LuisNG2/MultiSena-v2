@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "targets": {
     "net8.0": {
       "Azure.Core/1.38.0": {
@@ -4453,23 +4453,23 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\Servidor\\.nuget\\packages\\": {},
-    "D:\\Visual S Shared\\NuGetPackages": {}
+    "C:\\Users\\LuisNg\\.nuget\\packages\\": {},
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+      "projectUniqueName": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
       "projectName": "MultiVentasPOS",
-      "projectPath": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
-      "packagesPath": "C:\\Users\\Servidor\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\obj\\",
+      "projectPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+      "packagesPath": "C:\\Users\\LuisNg\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
-        "D:\\Visual S Shared\\NuGetPackages"
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
       ],
       "configFilePaths": [
-        "C:\\Users\\Servidor\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Users\\LuisNg\\AppData\\Roaming\\NuGet\\NuGet.Config",
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
@@ -4478,11 +4478,11 @@
       ],
       "sources": {
         "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
-        "C:\\Program Files\\dotnet\\library-packs": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
         "net8.0": {
+          "framework": "net8.0",
           "targetAlias": "net8.0",
           "projectReferences": {}
         }
@@ -4502,10 +4502,11 @@
         "auditLevel": "low",
         "auditMode": "direct"
       },
-      "SdkAnalysisLevel": "9.0.200"
+      "SdkAnalysisLevel": "10.0.400"
     },
     "frameworks": {
       "net8.0": {
+        "framework": "net8.0",
         "targetAlias": "net8.0",
         "dependencies": {
           "ClosedXML": {
@@ -4558,7 +4559,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

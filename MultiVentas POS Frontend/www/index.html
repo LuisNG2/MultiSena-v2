@@ -297,6 +297,8 @@
               <button id="btnToggle" class="btn small" aria-label="Cambiar vista">📋 Cambiar vista</button>
           </div>
 
+          <div id="catalogoInfo" style="font-size:11px; color:var(--text-muted); padding:0 10px 6px; text-align:right;"></div>
+
           <!-- 🆕 Hint visual de atajos (se oculta al escribir) -->
           <div class="buscador-hint" id="buscadorHint">
               💡 <strong>Tip:</strong> escribe <code>5 coca</code> para agregar 5 unidades.
@@ -406,44 +408,60 @@
   </div>
 </section>
 
-  <!-- ==================== INVENTARIO ==================== -->
+    <!-- ==================== INVENTARIO ==================== -->
   <section id="vista-inventario" class="vista" hidden>
     <div class="panel">
       <h2>Gestión de Inventario</h2>
       <div id="resumenInventario" class="resumen-grid"></div>
 
-        <div class="acciones-clientes">
-          <div class="acciones-buscador">
-              <div class="buscador-universal">
-                  <input type="text"
-                        id="buscarProducto"
-                        data-buscador
-                        data-tabla="tablaProductos"
-                        data-contador="contadorProductos"
-                        placeholder="Buscar por nombre, código o categoría...">
-                  <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
-              </div>
-              <span class="buscador-contador" id="contadorProductos"></span>
+      <div class="acciones-clientes">
+        <div class="acciones-buscador">
+          <div class="buscador-universal">
+            <input type="text"
+                  id="buscarProducto"
+                  data-buscador
+                  data-tabla="tablaProductos"
+                  data-contador="contadorProductos"
+                  placeholder="Buscar por nombre, código o categoría...">
+            <button class="clear-btn" type="button" aria-label="Limpiar">✕</button>
           </div>
+          <span class="buscador-contador" id="contadorProductos"></span>
+        </div>
 
-          <div class="acciones-botones">
-              <button class="btn" id="btnNuevoProducto">➕ Nuevo Producto</button>
-              <button class="btn ghost" id="btnImportarProductos">📥 Importar masivo</button>
-          </div>
+        <div class="acciones-botones">
+          <button class="btn" id="btnNuevoProducto">➕ Nuevo Producto</button>
+          <button class="btn ghost" id="btnImportarProductos">📥 Importar masivo</button>
+        </div>
       </div>
-      <table class="tabla-carrito" id="tablaProductos">
-        <thead>
-          <tr>
-            <th>Código</th>
-            <th>Nombre</th>
-            <th>Categoría</th>
-            <th>Precio</th>
-            <th>Stock</th>
-            <th style="width: 200px; text-align:center;">Acciones</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+
+      <!-- 🆕 Info de paginación -->
+      <div id="inventarioInfo" style="font-size:12px; color:var(--text-muted); text-align:right; margin-bottom:6px;"></div>
+
+      <!-- 🆕 Tabla con scroll infinito -->
+      <div id="inventarioScroll" class="inventario-scroll">
+        <table class="tabla-carrito" id="tablaProductos">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Nombre</th>
+              <th>Categoría</th>
+              <th>Precio</th>
+              <th>Stock</th>
+              <th style="width: 200px; text-align:center;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tablaProductosBody"></tbody>
+        </table>
+
+        <!-- 🆕 Sentinel para el IntersectionObserver -->
+        <div id="inventarioSentinel" style="height: 1px;"></div>
+
+        <!-- 🆕 Indicador de carga -->
+        <div id="inventarioLoader" style="display:none; text-align:center; padding:16px; color:var(--text-muted);">
+          <span style="display:inline-block; width:18px; height:18px; border:2px solid #cbd5e1; border-top-color: var(--color-primario); border-radius:50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 8px;"></span>
+          Cargando más productos...
+        </div>
+      </div>
     </div>
   </section>
 

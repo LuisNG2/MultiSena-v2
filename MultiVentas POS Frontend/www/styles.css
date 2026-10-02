@@ -3325,3 +3325,48 @@ input[data-buscador]:focus {
 [data-theme="dark"] .hist-venta .v-items {
   background: rgba(255, 255, 255, 0.06);
 }
+
+/* ============================================================
+   INVENTARIO — Scroll infinito
+   ============================================================ */
+.inventario-scroll {
+    max-height: calc(100vh - 320px);
+    min-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(71, 85, 105, 0.45) rgba(0, 0, 0, 0.03);
+}
+
+.inventario-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+.inventario-scroll::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+}
+.inventario-scroll::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.45);
+    border-radius: 6px;
+}
+
+/* Header sticky dentro del scroll */
+.inventario-scroll .tabla-carrito thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-input);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .inventario-scroll .tabla-carrito thead th {
+    background: var(--bg-body);
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .inventario-scroll {
+        max-height: calc(100vh - 280px);
+    }
+}

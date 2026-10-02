@@ -37,7 +37,7 @@ namespace MultiVentasPOS.Controllers
             [FromQuery] int pageSize = 50)
         {
             page = Math.Max(1, page);
-            pageSize = Math.Clamp(pageSize, 1, 200);
+            pageSize = Math.Clamp(pageSize, 1, 500);
 
             var query = _context.Productos
                 .AsNoTracking()
@@ -72,6 +72,101 @@ namespace MultiVentasPOS.Controllers
 
             Response.Headers["X-Total-Count"] = total.ToString();
             return Ok(items);
+        }
+
+        // ============================================================
+        // GET: api/Productos/catalogo?page=1&pageSize=300&categoriaId=&buscar=
+        // Endpoint optimizado para el catálogo del POS.
+        // - Proyección liviana (solo campos necesarios)
+        // - Paginación eficiente
+        // - Búsqueda server-side
+        // ============================================================
+        [HttpGet("catalogo")]
+        public async Task<IActionResult> GetCatalogo(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 300,
+            [FromQuery] int? categoriaId = null,
+            [FromQuery] string? buscar = null)
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 500);  // máximo 500 por request
+
+            var query = _context.Productos
+                .AsNoTracking()
+                .Where(p => p.Estado == "Activo");
+
+            // Filtro por categoría
+            if (categoriaId.HasValue)
+                query = query.Where(p => p.IdCategoria == categoriaId.Value);
+
+            // Búsqueda server-side
+            if (!string.IsNullOrWhiteSpace(buscar))
+            {
+                var b = buscar.Trim();
+                query = query.Where(p =>
+                    p.Nombre.Contains(b) ||
+                    p.CodigoInterno.Contains(b) ||
+                    (p.Sku != null && p.Sku.Contains(b)));
+            }
+
+            var total = await query.CountAsync();
+
+            var items = await query
+                .OrderByDescending(p => p.VecesVendido)   // los más vendidos primero
+                .ThenBy(p => p.Nombre)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(p => new
+                {
+                    p.IdProducto,
+                    p.CodigoInterno,
+                    p.Sku,
+                    p.Nombre,
+                    p.IdCategoria,
+                    CategoriaNombre = p.Categoria != null ? p.Categoria.Nombre : null,
+                    p.PrecioVenta,
+                    p.StockActual,
+                    p.StockMinimo,
+                    p.VecesVendido
+                })
+                .ToListAsync();
+
+            Response.Headers["X-Total-Count"] = total.ToString();
+            Response.Headers["X-Page"] = page.ToString();
+            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Total-Pages"] = ((int)Math.Ceiling(total / (double)pageSize)).ToString();
+
+            return Ok(new
+            {
+                items,
+                total,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (double)pageSize),
+                hayMas = page * pageSize < total
+            });
+        }
+
+        // ============================================================
+        // GET: api/Productos/categorias-resumen
+        // Devuelve SOLO las categorías con conteo de productos activos.
+        // Mucho más liviano que traer todos los productos.
+        // ============================================================
+        [HttpGet("categorias-resumen")]
+        public async Task<IActionResult> GetCategoriasResumen()
+        {
+            var resumen = await _context.Categorias
+                .AsNoTracking()
+                .Select(c => new
+                {
+                    c.IdCategoria,
+                    c.Nombre,
+                    CantidadProductos = c.Productos.Count(p => p.Estado == "Activo")
+                })
+                .OrderBy(c => c.Nombre)
+                .ToListAsync();
+
+            return Ok(resumen);
         }
 
         // ============================================================
@@ -378,8 +473,69 @@ namespace MultiVentasPOS.Controllers
 
             _logger.LogInformation("Producto eliminado: {IdProducto}", id);
             return NoContent();
-                }
+        }
+
         // ============================================================
+        // GET: api/Productos/buscar?q=term&limite=50
+        // Búsqueda optimizada para el POS híbrido.
+        // - Coincidencia exacta por SKU/código primero (escáner)
+        // - Luego coincidencia parcial por nombre/código/SKU
+        // ============================================================
+        [HttpGet("buscar")]
+        public async Task<IActionResult> Buscar(
+            [FromQuery] string q,
+            [FromQuery] int limite = 50)
+        {
+            if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
+                return BadRequest(new { message = "La búsqueda debe tener al menos 2 caracteres." });
+
+            q = q.Trim();
+            limite = Math.Clamp(limite, 1, 100);
+
+            // 1. Búsqueda EXACTA por SKU o código (escáner)
+            var porCodigo = await _context.Productos
+                .AsNoTracking()
+                .Where(p => p.Estado == "Activo" &&
+                    (p.CodigoInterno == q || p.Sku == q))
+                .Select(p => new
+                {
+                    p.IdProducto, p.CodigoInterno, p.Sku, p.Nombre,
+                    p.IdCategoria,
+                    CategoriaNombre = p.Categoria != null ? p.Categoria.Nombre : null,
+                    p.PrecioVenta, p.StockActual, p.StockMinimo, p.VecesVendido
+                })
+                .Take(5)
+                .ToListAsync();
+
+            // 2. Búsqueda parcial
+            var porNombre = await _context.Productos
+                .AsNoTracking()
+                .Where(p => p.Estado == "Activo" &&
+                    (p.Nombre.Contains(q) ||
+                        p.CodigoInterno.Contains(q) ||
+                        (p.Sku != null && p.Sku.Contains(q))))
+                .OrderByDescending(p => p.VecesVendido)
+                .ThenBy(p => p.Nombre)
+                .Take(limite)
+                .Select(p => new
+                {
+                    p.IdProducto, p.CodigoInterno, p.Sku, p.Nombre,
+                    p.IdCategoria,
+                    CategoriaNombre = p.Categoria != null ? p.Categoria.Nombre : null,
+                    p.PrecioVenta, p.StockActual, p.StockMinimo, p.VecesVendido
+                })
+                .ToListAsync();
+
+            // 3. Combinar (sin duplicados)
+            var idsExactos = porCodigo.Select(x => x.IdProducto).ToHashSet();
+            var resultados = porCodigo
+                .Concat(porNombre.Where(x => !idsExactos.Contains(x.IdProducto)))
+                .Take(limite)
+                .ToList();
+
+            return Ok(new { query = q, total = resultados.Count, resultados });
+        }        
+                // ============================================================
         // GET: api/Productos/search?q=term
         // ============================================================
         [HttpGet("search")]
@@ -423,7 +579,7 @@ namespace MultiVentasPOS.Controllers
             return Ok(results);
         }
 
-      [HttpGet("top")]
+        [HttpGet("top")]
             [Authorize]
             public async Task<ActionResult<IEnumerable<ProductoDto>>> GetTopProductos(
                 [FromQuery] int limite = 1000)

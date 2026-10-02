@@ -27,7 +27,13 @@ builder.Services.AddCors(options =>
     {
         policy.AllowAnyOrigin()
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .WithExposedHeaders(
+                  "X-Total-Count",
+                  "X-Page",
+                  "X-Page-Size",
+                  "X-Total-Pages"
+              );   // 🆕 exponer headers personalizados
     });
 });
 
