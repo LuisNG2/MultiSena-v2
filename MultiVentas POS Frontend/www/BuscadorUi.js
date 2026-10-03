@@ -20,7 +20,7 @@
 //   - Cantidad automática ("arroz 3", "3 arroz", "arroz*3")
 //   - Detección de lector de código de barras
 //   - Deduplicación de resultados
-//   - 🚫 SIN atajos de teclas 1-5 (eliminados por bugs)
+//   - Ctrl+1-5 para agregar sugerencias (con anti-rebote)
 // ============================================================
 
 const BuscadorUI = (() => {
@@ -29,6 +29,10 @@ const BuscadorUI = (() => {
     const HISTORIAL_KEY = 'pos_busquedas_recientes';
     const MAX_HISTORIAL = 5;
     const MIN_LEN_HISTORIAL = 3;
+
+    // Anti-rebote global para atajos
+    const DEBOUNCE_ATAJO_MS = 250;
+    const DEBOUNCE_CLICK_SUG_MS = 300;
 
     // Mapeo de texto de encabezado → campo del motor
     const MAPEO_COLUMNAS = [
@@ -95,6 +99,22 @@ const BuscadorUI = (() => {
      * CONECTAR INPUT
      * ========================================================= */
     function conectarInput(input) {
+        // 🆕 GUARD: Si ya está inicializado con el MISMO contenedor, NO reinicializar
+        if (input._buscadorAPI && input.hasAttribute('data-buscador-ready')) {
+            const contenedorActual = encontrarContenedor(input);
+            if (!contenedorActual || input._buscadorAPI._contenedor !== contenedorActual) {
+                console.log(`🔄 ${input.id}: contenedor cambió, reinicializando...`);
+                input.removeAttribute('data-buscador-ready');
+                input._buscadorAPI = null;
+            } else {
+                console.log(`⏭ ${input.id}: ya inicializado, se omite`);
+                return;
+            }
+        }
+
+        // 🆕 LIMPIEZA: Remover listeners previos y paneles huérfanos
+        limpiarListenersPrevios(input);
+
         const contenedor = encontrarContenedor(input);
         if (!contenedor) {
             console.warn('⚠️ BuscadorUI: no se encontró tabla para', input.id);
@@ -180,7 +200,6 @@ const BuscadorUI = (() => {
             aplicandoFiltro = false;
             if (contador) contador.textContent = '';
 
-            // 🆕 Refrescar stock también al restaurar
             if (typeof refrescarStockCatalogo === 'function') {
                 setTimeout(() => refrescarStockCatalogo(), 0);
             }
@@ -333,7 +352,7 @@ const BuscadorUI = (() => {
             } else {
                 ocultarSugerencias();
             }
-            // 🆕 Refrescar el stock dinámico después de aplicar el filtro
+
             if (typeof refrescarStockCatalogo === 'function') {
                 setTimeout(() => refrescarStockCatalogo(), 0);
             }
@@ -422,6 +441,9 @@ const BuscadorUI = (() => {
          * ============================================ */
 
         function crearPanelSugerencias(input) {
+            // 🆕 Eliminar paneles previos huérfanos
+            input.parentElement?.querySelectorAll('.buscador-sugerencias').forEach(p => p.remove());
+
             const panel = document.createElement('div');
             panel.className = 'buscador-sugerencias';
             panel.style.display = 'none';
@@ -476,10 +498,7 @@ const BuscadorUI = (() => {
             if (sugerenciasPanel) sugerenciasPanel.style.display = 'none';
         }
 
-        document.addEventListener('click', (e) => {
-            if (!input.parentElement.contains(e.target)) ocultarSugerencias();
-        });
-                /* ============================================
+        /* ============================================
          * ACCIÓN DE ESCANEO
          * ============================================ */
 
@@ -529,15 +548,24 @@ const BuscadorUI = (() => {
         function agregarPrimeroAlCarrito(encontrados) {
             if (!encontrados || encontrados.length === 0) return;
             agregarItemAlCarrito(encontrados[0], input.value);
-                    }
+        }
 
-                            /**
-                     * Agrega un item al carrito SUMANDO cantidades si ya existe.
-                     * Respeta el stock disponible y muestra UN SOLO toast.
-                     */
-                    function agregarItemAlCarrito(item, textoQuery) {
-                if (!item || !item._el) return;
+        /**
+         * Agrega un item al carrito SUMANDO cantidades si ya existe.
+         * Respeta el stock disponible y muestra UN SOLO toast.
+         * 🆕 Con lock anti-reentrada para evitar dobles ejecuciones.
+         */
+        function agregarItemAlCarrito(item, textoQuery) {
+            if (!item || !item._el) return;
 
+            // 🆕 Anti-reentrada: si ya se está procesando, ignorar
+            if (input._agregandoItem) {
+                console.warn('⏭ agregarItemAlCarrito: ya en ejecución, ignorado');
+                return;
+            }
+            input._agregandoItem = true;
+
+            try {
                 const elemento = item._el;
                 const btnAgregar = elemento.querySelector('.agregar');
 
@@ -559,14 +587,13 @@ const BuscadorUI = (() => {
 
                 if (!sku || !estado.carritos[ventaId]) return;
 
-                // 🆕 Calcular stock total en BD (prioridad: stockBase > caché de productos > dataset.stock)
+                // Calcular stock total en BD (prioridad: stockBase > caché > dataset.stock)
                 let stockTotalBD = 0;
 
                 const stockBase = parseInt(elemento.dataset.stockBase || '0', 10);
                 if (stockBase > 0) {
                     stockTotalBD = stockBase;
                 } else {
-                    // Fallback: buscar en el caché de productos en memoria
                     const producto = (estado.productos || []).find(p => {
                         const pSku = String(p.sku || p.codigoInterno || '').trim().toUpperCase();
                         return pSku === sku.toUpperCase();
@@ -579,13 +606,13 @@ const BuscadorUI = (() => {
                     }
                 }
 
-                // 🆕 Ver si ya está en el carrito actual (normalizando SKUs)
+                // Ver si ya está en el carrito actual (normalizando SKUs)
                 const itemCarrito = estado.carritos[ventaId].find(i =>
                     String(i.sku || '').trim().toUpperCase() === sku.toUpperCase()
                 );
                 const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
 
-                // 🆕 Calcular cuánto está reservado en TODOS los carritos
+                // Calcular cuánto está reservado en TODOS los carritos
                 let reservadoTotal = 0;
                 for (const vid in estado.carritos) {
                     const c = estado.carritos[vid] || [];
@@ -596,11 +623,10 @@ const BuscadorUI = (() => {
                     }
                 }
 
-                // Espacio disponible = stock BD - reservado en OTROS carritos
                 const reservadoOtros = reservadoTotal - cantidadActual;
                 const espacioDisponible = stockTotalBD - reservadoOtros;
 
-                // 🎯 Validación: si NO cabe al menos 1 unidad, bloquear
+                // Validación: si NO cabe al menos 1 unidad, bloquear
                 if (espacioDisponible < 1) {
                     if (typeof toast === 'function') {
                         const detalle = reservadoOtros > 0
@@ -670,13 +696,17 @@ const BuscadorUI = (() => {
                 input.value = '';
                 aplicar('');
                 input.focus();
+            } finally {
+                // 🆕 Liberar lock después de un pequeño delay para absorber eventos duplicados
+                setTimeout(() => { input._agregandoItem = false; }, 60);
             }
+        }
 
         /* ============================================
-         * EVENTOS
+         * HANDLERS NOMBRADOS (para poder limpiarlos)
          * ============================================ */
 
-        input.addEventListener('input', (e) => {
+        const onInputHandler = (e) => {
             const valor = e.target.value;
 
             if (debounceTimer) clearTimeout(debounceTimer);
@@ -695,9 +725,9 @@ const BuscadorUI = (() => {
                     input._saveTimer = setTimeout(() => guardarBusqueda(valor), 800);
                 }
             }, fueEscaneado() ? 0 : 120);
-        });
+        };
 
-        input.addEventListener('keydown', (e) => {
+        const onKeydownHandler = (e) => {
             const ahora = Date.now();
             const diff = ahora - ultimaTecla;
             ultimaTecla = ahora;
@@ -710,6 +740,30 @@ const BuscadorUI = (() => {
             input._resetTecleo = setTimeout(() => {
                 tecleandoRapido = false;
             }, 500);
+
+            // ============================================================
+            // CTRL+1-5 (con anti-rebote fuerte)
+            // ============================================================
+            if (['1', '2', '3', '4', '5'].includes(e.key) && e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation(); // 🆕 detiene otros listeners del mismo elemento
+
+                // 🆕 Anti-rebote: ignorar si ya se procesó en los últimos X ms
+                if (input._ultimoAtajo && (ahora - input._ultimoAtajo) < DEBOUNCE_ATAJO_MS) {
+                    console.log('⏭ Ctrl+N ignorado (debounce)');
+                    return;
+                }
+                input._ultimoAtajo = ahora;
+
+                const indice = parseInt(e.key, 10) - 1;
+                const encontrados = input._ultimosEncontrados || [];
+
+                if (encontrados.length > indice) {
+                    agregarItemAlCarrito(encontrados[indice], input.value);
+                }
+                return;
+            }
 
             // ============================================================
             // ENTER
@@ -740,21 +794,7 @@ const BuscadorUI = (() => {
                 e.preventDefault();
                 return;
             }
-        
-            // ============================================================
-            // ATAJOS NUMÉRICOS 1-5 (con actualización dinámica de stock)
-            // ============================================================
-            
-            if (['1', '2', '3', '4', '5'].includes(e.key) && e.ctrlKey && !e.altKey && !e.metaKey) {
-                const indice = parseInt(e.key, 10) - 1;
-                const encontrados = input._ultimosEncontrados || [];
 
-                if (encontrados.length > indice) {
-                    e.preventDefault();
-                    agregarItemAlCarrito(encontrados[indice], input.value);
-                    return;
-                }
-            }
             // ============================================================
             // ESCAPE
             // ============================================================
@@ -797,82 +837,58 @@ const BuscadorUI = (() => {
                     }
                 }
             }
-        });
+        };
 
-        // ============================================================
-// SELECCIÓN POR CLIC EN SUGERENCIAS PANEL
-// ============================================================
-sugerenciasPanel.addEventListener('click', (e) => {
-    // Buscamos si el clic ocurrió dentro de un item de sugerencia
-    const item = e.target.closest('.sugerencia-item');
-    if (!item) return;
+        const onSugerenciasClick = (e) => {
+            const item = e.target.closest('.sugerencia-item');
+            if (!item) return;
 
-    // Obtenemos todos los items para calcular el índice del elemento clickeado
-    const items = Array.from(sugerenciasPanel.querySelectorAll('.sugerencia-item'));
-    const indice = items.indexOf(item);
+            // 🆕 Anti-rebote
+            const ahora = Date.now();
+            if (input._ultimoClickSug && (ahora - input._ultimoClickSug) < DEBOUNCE_CLICK_SUG_MS) {
+                return;
+            }
+            input._ultimoClickSug = ahora;
 
-    const encontrados = input._ultimosEncontrados || [];
+            const items = Array.from(sugerenciasPanel.querySelectorAll('.sugerencia-item'));
+            const indice = items.indexOf(item);
+            const encontrados = input._ultimosEncontrados || [];
 
-    // Verificamos que el índice exista dentro del rango de los atajos (0 a 4)
-    if (indice >= 0 && indice < 5 && encontrados.length > indice) {
-        e.preventDefault();
-        // Ejecuta exactamente la misma lógica que tu atajo Ctrl + 1-5
-        agregarItemAlCarrito(encontrados[indice], input.value);
-    }
-});
+            if (indice >= 0 && indice < 5 && encontrados.length > indice) {
+                e.preventDefault();
+                e.stopPropagation();
+                agregarItemAlCarrito(encontrados[indice], input.value);
+            }
+        };
 
+        const onDocClick = (e) => {
+            if (!input.parentElement.contains(e.target)) ocultarSugerencias();
+        };
 
-        // ============================================================
-        // FOCUS: mostrar historial de búsquedas
-        // ============================================================
-             // 🚫 HISTORIAL DESACTIVADO
-        // Si quieres reactivarlo, descomenta este bloque.
-        /*
-        input.addEventListener('focus', () => {
-            if (input.value) return;
-
-            const historial = obtenerHistorial();
-            if (historial.length === 0) return;
-
-            sugerenciasPanel.innerHTML = `
-                <div class="sugerencia-titulo">🕐 Búsquedas recientes</div>
-                ${historial.map(h => `
-                    <div class="sugerencia-item historial-item" data-historial="${escapeHtml(h)}">
-                        <span class="sugerencia-nombre">${escapeHtml(h)}</span>
-                        <span class="sugerencia-sku">↻</span>
-                    </div>
-                `).join('')}
-            `;
-
-            sugerenciasPanel.style.display = 'block';
-
-            sugerenciasPanel.querySelectorAll('.historial-item').forEach(el => {
-                el.addEventListener('click', () => {
-                    const term = el.dataset.historial;
-                    input.value = term;
-                    aplicar(term);
-                    ocultarSugerencias();
-                });
-            });
-        });
-        */
-        // ============================================================
-        // BOTÓN CLEAR
-        // ============================================================
-        if (clearBtn && !clearBtn._attached) {
-            clearBtn._attached = true;
-            clearBtn.addEventListener('click', () => {
-                input.value = '';
-                aplicar('');
-                ocultarSugerencias();
-                input.focus();
-            });
-        }
+        const onClearClick = () => {
+            input.value = '';
+            aplicar('');
+            ocultarSugerencias();
+            input.focus();
+        };
 
         const toggleClear = () => {
             if (clearBtn) clearBtn.style.display = input.value ? 'flex' : 'none';
         };
+
+        // ============================================================
+        // REGISTRAR LISTENERS
+        // ============================================================
+        input.addEventListener('input', onInputHandler);
+        input.addEventListener('keydown', onKeydownHandler);
         input.addEventListener('input', toggleClear);
+        document.addEventListener('click', onDocClick);
+        sugerenciasPanel.addEventListener('click', onSugerenciasClick);
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', onClearClick);
+        }
+
         toggleClear();
 
         // ============================================================
@@ -898,30 +914,99 @@ sugerenciasPanel.addEventListener('click', (e) => {
         registrados.set(input, { contenedor, observer, input });
 
         // ============================================================
+        // GUARDAR REFERENCIAS PARA LIMPIEZA FUTURA
+        // ============================================================
+        input._buscadorListeners = {
+            input: onInputHandler,
+            keydown: onKeydownHandler,
+            toggleClear: toggleClear,
+            docClick: onDocClick,
+            sugClick: onSugerenciasClick,
+            clearClick: onClearClick,
+            clearBtn: clearBtn,
+            sugerenciasPanel: sugerenciasPanel
+        };
+        input._buscadorObserver = observer;
+
+        // ============================================================
         // API PÚBLICA
         // ============================================================
         input._buscadorAPI = {
             refresh: () => {
-                elementosContados = 0;
-                capturarElementos();
-                aplicar(input.value);
+                try {
+                    elementosContados = 0;
+                    capturarElementos();
+                    aplicar(input.value);
+                } catch (e) {
+                    console.warn('⚠️ Error en buscador.refresh():', e);
+                }
             },
             clear: () => {
-                input.value = '';
-                aplicar('');
-                toggleClear();
+                try {
+                    input.value = '';
+                    aplicar('');
+                    toggleClear();
+                } catch (e) {
+                    console.warn('⚠️ Error en buscador.clear():', e);
+                }
             },
             filtrarCategoria: (cat) => {
-                filtroCategoria = cat;
-                aplicar(input.value);
+                try {
+                    filtroCategoria = cat;
+                    aplicar(input.value);
+                } catch (e) {
+                    console.warn('⚠️ Error en buscador.filtrarCategoria():', e);
+                }
             },
             simularScan: (codigo) => {
-                input.value = codigo;
-                tecleandoRapido = true;
-                aplicar(codigo);
-                setTimeout(() => ejecutarAccionScan(), 100);
+                try {
+                    input.value = codigo;
+                    tecleandoRapido = true;
+                    aplicar(codigo);
+                    setTimeout(() => ejecutarAccionScan(), 100);
+                } catch (e) {
+                    console.warn('⚠️ Error en buscador.simularScan():', e);
+                }
             }
         };
+        input._buscadorAPI._contenedor = contenedor;
+        input.setAttribute('data-buscador-ready', 'true');
+    }
+
+    /* =========================================================
+     * LIMPIEZA DE LISTENERS PREVIOS
+     * ========================================================= */
+    function limpiarListenersPrevios(input) {
+        const L = input._buscadorListeners;
+        if (!L) return;
+
+        try {
+            input.removeEventListener('input', L.input);
+            input.removeEventListener('keydown', L.keydown);
+            input.removeEventListener('input', L.toggleClear);
+            document.removeEventListener('click', L.docClick);
+            if (L.sugClick && L.sugerenciasPanel) {
+                L.sugerenciasPanel.removeEventListener('click', L.sugClick);
+            }
+            if (L.clearClick && L.clearBtn) {
+                L.clearBtn.removeEventListener('click', L.clearClick);
+            }
+        } catch (e) {
+            console.warn('⚠️ Error limpiando listeners previos:', e);
+        }
+
+        // Eliminar panel de sugerencias anterior
+        if (L.sugerenciasPanel && L.sugerenciasPanel.parentElement) {
+            L.sugerenciasPanel.remove();
+        }
+
+        // Desconectar observer anterior
+        if (input._buscadorObserver) {
+            input._buscadorObserver.disconnect();
+            input._buscadorObserver = null;
+        }
+
+        input._buscadorListeners = null;
     }
 
     /* =========================================================

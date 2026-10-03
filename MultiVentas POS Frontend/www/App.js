@@ -82,13 +82,144 @@ const STORAGE_KEYS = {
 /* ============================================================
    CACHÉ DEL TOP 1000 PRODUCTOS — Búsqueda local inteligente
    ============================================================ */
-const TOP_CACHE_KEY = 'pos_top_productos_cache_v3';
-const TOP_CACHE_TTL = 60 * 60 * 1000;   // 1 hora
-const TOP_LIMITE = 2000;
+    const TOP_CACHE_KEY = 'pos_top_productos_cache_v3';
+    const TOP_CACHE_TTL = 60 * 60 * 1000;
+    const TOP_LIMITE = 2000;
 
-let _topProductos = [];   // caché en memoria del top
-let _topCargando = false;
+    let _topProductos = [];
+    let _topCargando = false;
 
+    /* ============================================================
+   🆕 CONTROL DE CARGA ÚNICA DEL TOP 2000
+   Evita llamadas duplicadas al endpoint /Productos/top
+   ============================================================ */
+    const _controlCargaTop = {
+        promesaEnCurso: null,
+        ultimaCargaExitosa: 0
+    };
+
+    async function cargarTopUnaVez(forzar = false) {
+    const ahora = Date.now();
+    const CACHE_TTL = 5 * 60 * 1000;
+
+    if (_controlCargaTop.promesaEnCurso) {
+        console.log('⏭ Top ya se está cargando...');
+        return _controlCargaTop.promesaEnCurso;
+    }
+
+    if (!forzar &&
+        estado.productos.length > 0 &&
+        !estado._productosCacheInvalidado &&
+        (ahora - _controlCargaTop.ultimaCargaExitosa) < CACHE_TTL) {
+        console.log(`⚡ Top en caché válido (${estado.productos.length} productos)`);
+        return estado.productos;
+    }
+
+    _controlCargaTop.promesaEnCurso = (async () => {
+        try {
+            console.log('📥 Cargando top 2000 (promesa única)...');
+            const resp = await api.get('/Productos/top?limite=2000');
+
+            if (!resp.ok) {
+                console.warn('⚠️ Error cargando top');
+                return null;
+            }
+
+            const productos = (resp.data || []).filter(p => p.estado === 'Activo');
+
+            // ============================================================
+            // 🆕 LIMPIEZA AUTOMÁTICA SI LA BD ESTÁ VACÍA
+            // ============================================================
+            if (productos.length === 0) {
+                console.warn('🚨 La base de datos está VACÍA. Limpiando todos los cachés...');
+
+                // Limpiar IndexedDB
+                if (typeof CatalogoDB !== 'undefined') {
+                    await CatalogoDB.limpiarCache();
+                    console.log('   ✅ IndexedDB limpiado');
+                }
+
+                // Limpiar LocalStorage
+                localStorage.removeItem('pos_top_productos_cache_v3');
+                localStorage.removeItem('pos_catalogo_completo');
+                localStorage.removeItem('pos_catalogo_meta');
+                localStorage.removeItem('pos_hash_productos');
+                localStorage.removeItem('pos_version_catalogo');
+                console.log('   ✅ LocalStorage limpiado');
+
+                // Limpiar caché de búsquedas
+                if (typeof _busquedaCacheGlobal !== 'undefined') {
+                    _busquedaCacheGlobal.clear();
+                    console.log('   ✅ Caché de búsquedas limpiado');
+                }
+
+                // Limpiar estado (excepto tokens y usuario)
+                estado.productos = [];
+                estado.carritos = { venta1: [] };
+                estado.historial = [];
+                estado._productosCacheInvalidado = true;
+                console.log('   ✅ Estado limpiado');
+
+                // Limpiar el DOM
+                const contenedor = document.getElementById('catalogoProductos');
+                if (contenedor) {
+                    contenedor.innerHTML = `
+                        <div style="grid-column:1/-1; text-align:center; padding:60px 20px; color:var(--text-muted);">
+                            <div style="font-size:48px; opacity:0.5; margin-bottom:12px;">📦</div>
+                            <div style="font-weight:600; font-size:16px; margin-bottom:6px;">
+                                No hay productos en el catálogo
+                            </div>
+                            <div style="font-size:13px;">
+                                La base de datos está vacía. Importa productos para comenzar.
+                            </div>
+                        </div>`;
+                    console.log('   ✅ DOM limpiado');
+                }
+
+                // Resetear control de carga
+                _controlCargaTop.ultimaCargaExitosa = 0;
+
+                // Mostrar notificación al usuario
+                if (typeof toast === 'function') {
+                    toast('⚠️ No hay productos en el catálogo', 'error');
+                }
+
+                return [];
+            }
+
+            // ============================================================
+            // DETECCIÓN DE CAMBIOS DRÁSTICOS
+            // ============================================================
+            const productosViejos = estado.productos.length;
+            if (productosViejos > 0) {
+                const ratio = Math.abs(productos.length - productosViejos) / productosViejos;
+                if (ratio > 0.20) {
+                    console.log(`🚨 Cambio drástico detectado: ${productosViejos} → ${productos.length} (${(ratio * 100).toFixed(1)}%)`);
+                    console.log('🔄 Invalidando IndexedDB para resincronizar...');
+                    
+                    if (typeof CatalogoDB !== 'undefined') {
+                        await CatalogoDB.limpiarCache();
+                    }
+                }
+            }
+
+            estado.productos = productos;
+            estado._ultimaCargaTop = Date.now();
+            estado._productosCacheInvalidado = false;
+            _controlCargaTop.ultimaCargaExitosa = Date.now();
+
+            console.log(`✅ Top cargado: ${productos.length} productos`);
+            return productos;
+        } catch (e) {
+            console.error('❌ Error en cargarTopUnaVez:', e);
+            return null;
+        } finally {
+            _controlCargaTop.promesaEnCurso = null;
+        }
+    })();
+
+    return _controlCargaTop.promesaEnCurso;
+}
 /* ============================================================
    3. PERSISTENCIA
    ============================================================ */
@@ -151,6 +282,17 @@ function limpiarEstadoSesion() {
     estado._clientesInited = false;
     estado._cargandoProductos = false;
 
+    // 🆕 Resetear control de carga del top
+    estado._ultimaCargaTop = 0;
+    estado._productosCacheInvalidado = true;
+    _controlCargaTop.promesaEnCurso = null;
+    _controlCargaTop.ultimaCargaExitosa = 0;
+
+    // 🆕 Resetear banderas del catálogo completo
+    window._catalogoCompletoSolicitado = false;
+    window._catalogoCompletoCargado = false;
+
+    // Limpiar UI de tabs (excepto venta1)
     const tabs = document.getElementById('tabs');
     if (tabs) {
         tabs.querySelectorAll('.tab[data-id]').forEach(t => {
@@ -169,7 +311,6 @@ function limpiarEstadoSesion() {
 
     console.log('🧹 Estado de sesión limpiado');
 }
-
 /* ============================================================
    4. TOASTS Y MODALES
    ============================================================ */
@@ -385,63 +526,30 @@ let _catalogoEstado = {
    PRECARGA DEL TOP 1000 — Usa /Productos/top existente
    ============================================================ */
 
+/* ============================================================
+   🆕 Precarga del top 2000 — YA NO HACE PETICIÓN
+   Solo se encarga de mantener sincronizado el caché de localStorage
+   con lo que ya está en memoria. La petición la hace cargarTopUnaVez().
+   ============================================================ */
 async function precargarTop1000() {
     const token = localStorage.getItem('pos_token');
     if (!token) return;
 
-    // 1. Evitar carga duplicada simultánea
-    if (_topCargando) {
-        console.log('⏭ Top ya se está cargando, se omite');
-        return;
-    }
-
-    // 2. Si ya está en memoria, no volver a pedir
-    if (_topProductos.length > 0) {
-        console.log(`⚡ Top ya cargado (${_topProductos.length} productos en memoria)`);
-        return;
-    }
-
-    _topCargando = true;
-
-    try {
-        // 3. Intentar leer de localStorage
-        try {
-            const raw = localStorage.getItem(TOP_CACHE_KEY);
-            if (raw) {
-                const cached = JSON.parse(raw);
-                const edad = Date.now() - (cached.ts || 0);
-                if (edad < TOP_CACHE_TTL && Array.isArray(cached.data) && cached.data.length > 0) {
-                    _topProductos = cached.data;
-                    console.log(`⚡ Top ${_topProductos.length} desde caché`);
-                    return;
-                }
-            }
-        } catch (e) { /* ignorar */ }
-
-        // 4. Consultar al servidor
-        console.log(`📥 Descargando top ${TOP_LIMITE}...`);
-        const t0 = performance.now();
-        const resp = await api.get(`/Productos/top?limite=${TOP_LIMITE}`);
-        if (!resp.ok) return;
-
-        const productos = resp.data || [];
-        _topProductos = productos;
-        console.log(`✅ Top ${productos.length} en ${Math.round(performance.now() - t0)}ms`);
-
-        // 5. Guardar en localStorage
+    // Si ya está en memoria, solo sincronizar localStorage
+    if (estado.productos.length > 0) {
         try {
             localStorage.setItem(TOP_CACHE_KEY, JSON.stringify({
                 ts: Date.now(),
-                data: productos
+                data: estado.productos
             }));
         } catch (e) {
-            console.warn('No se pudo guardar el top:', e);
+            console.warn('No se pudo guardar el top en caché:', e);
         }
-    } catch (e) {
-        console.warn('Error precargando top:', e);
-    } finally {
-        _topCargando = false;
+        return;
     }
+
+    // Si no hay nada en memoria, usar el sistema único
+    await cargarTopUnaVez(false);
 }
 
 function limpiarCacheTop() {
@@ -451,17 +559,19 @@ function limpiarCacheTop() {
 }
 
 /* ============================================================
-   BÚSQUEDA LOCAL (top 1000 + catálogo actual)
+   Búsqueda LOCAL (SOLO memoria — usa estado.productos)
    ============================================================ */
 function buscarLocal(query) {
     if (!query || query.trim().length < 2) return [];
     const q = query.trim();
 
     const mapa = new Map();
-    for (const p of _topProductos) mapa.set(p.idProducto, p);
+    
+    // ✅ Usar SOLO estado.productos (que sí tiene los 2000)
     for (const p of estado.productos || []) {
-        if (!mapa.has(p.idProducto)) mapa.set(p.idProducto, p);
+        mapa.set(p.idProducto, p);
     }
+
     if (mapa.size === 0) return [];
 
     const items = [];
@@ -479,9 +589,11 @@ function buscarLocal(query) {
     const encontrados = Buscador.buscar(q, items, { minScore: 25 });
     return encontrados.slice(0, 100);
 }
-
 /* ============================================================
-   BÚSQUEDA EN SERVIDOR (con caché y cancelación)
+   BÚSQUEDA HÍBRIDA EN 3 CAPAS — SIN RECARGAR EL TOP
+   1. Memoria (TOP 2000)             → 1-5ms
+   2. Catálogo completo IndexedDB    → 5-20ms
+   3. Servidor (último recurso)      → 50-200ms
    ============================================================ */
 const _busquedaCacheGlobal = new Map();
 let _busquedaAbortControllerGlobal = null;
@@ -500,8 +612,63 @@ async function buscarEnServidor(query, silencioso = false) {
     _busquedaAbortControllerGlobal = new AbortController();
 
     try {
+        // ============================================================
+        // CAPA 1: Búsqueda local en memoria (TOP 2000)
+        // ============================================================
+        const locales = buscarLocal(q);
+        if (locales.length >= 5) {
+            console.log(`✅ "${q}": ${locales.length} resultados en memoria`);
+            cachearYMostrar(cacheKey, locales);
+            return;
+        }
+
+        // ============================================================
+        // CAPA 2: Catálogo completo en IndexedDB
+        // ============================================================
+        if (typeof CatalogoDB !== 'undefined' && 
+            typeof CatalogoDB.buscarPorTexto === 'function') {
+            try {
+                console.log(`🔍 "${q}": buscando en IndexedDB...`);
+                const t0 = performance.now();
+                
+                const enIndexedDB = await CatalogoDB.buscarPorTexto(q, 50);
+                const tiempo = Math.round(performance.now() - t0);
+
+                if (enIndexedDB && enIndexedDB.length > 0) {
+                    const resultados = enIndexedDB.map(p => ({
+                        idProducto: p.idProducto,
+                        nombre: p.nombre,
+                        sku: p.sku || p.codigoInterno || '',
+                        categoria: p.categoriaNombre || '',
+                        vecesVendido: p.vecesVendido || 0,
+                        _ref: p
+                    }));
+
+                    const idsVistos = new Set(resultados.map(r => r.idProducto));
+                    const combinados = [
+                        ...resultados,
+                        ...locales.filter(l => !idsVistos.has(l.idProducto))
+                    ];
+
+                    console.log(`✅ "${q}": ${combinados.length} resultados (IndexedDB en ${tiempo}ms)`);
+                    cachearYMostrar(cacheKey, combinados);
+                    return;
+                }
+            } catch (e) {
+                console.warn('⚠️ Error buscando en IndexedDB:', e);
+            }
+        }
+
+        // ============================================================
+        // CAPA 3: Servidor (último recurso) — SOLO busca, NO recarga
+        // ============================================================
+        console.log(`🔍 "${q}": consultando servidor...`);
+        
         const resp = await api.get(`/Productos/buscar?q=${encodeURIComponent(q)}&limite=50`);
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            if (locales.length > 0) cachearYMostrar(cacheKey, locales);
+            return;
+        }
 
         const resultadosRaw = resp.data.resultados || resp.data || [];
         const resultados = resultadosRaw.map(p => ({
@@ -513,80 +680,57 @@ async function buscarEnServidor(query, silencioso = false) {
             _ref: p
         }));
 
-        if (_busquedaCacheGlobal.size >= 20) {
-            const primeraClave = _busquedaCacheGlobal.keys().next().value;
-            _busquedaCacheGlobal.delete(primeraClave);
-        }
-        _busquedaCacheGlobal.set(cacheKey, resultados);
-
-         // 🆕 Si el server no dio resultados, intentar fonética local ampliada
-        if (resultados.length === 0) {
-            console.log(`🔍 "${q}": 0 del server, probando fonética local ampliada...`);
-            // Cargar más productos si no están en caché
-            const ampliado = await buscarFoneticaAmpliada(q);
-            if (ampliado.length > 0) {
-                mostrarResultadosBusqueda(ampliado);
-                return;
-            }
+        if (resultados.length === 0 && locales.length > 0) {
+            cachearYMostrar(cacheKey, locales);
+            return;
         }
 
-        mostrarResultadosBusqueda(resultados);
+        cachearYMostrar(cacheKey, resultados);
 
-        if (!silencioso) console.log(`🔍 "${q}": ${resultados.length} resultados`);
-        } catch (e) {
-            if (e.name !== 'AbortError') console.warn('Error buscando:', e);
-        }
+    } catch (e) {
+        if (e.name !== 'AbortError') console.warn('Error buscando:', e);
+    }
+}
+
+function cachearYMostrar(cacheKey, resultados) {
+    // Limitar caché a 50 entradas (era 20, muy poco)
+    if (_busquedaCacheGlobal.size >= 50) {
+        const primeraClave = _busquedaCacheGlobal.keys().next().value;
+        _busquedaCacheGlobal.delete(primeraClave);
+    }
+    _busquedaCacheGlobal.set(cacheKey, resultados);
+    mostrarResultadosBusqueda(resultados);
 }
 
 /* ============================================================
-   BÚSQUEDA FONÉTICA AMPLIADA
-   Cuando el server no encuentra nada, pedimos al server TODOS los
-   productos (sin filtro LIKE) y aplicamos fonética en cliente.
+   Helper: cachear y mostrar resultados
    ============================================================ */
-async function buscarFoneticaAmpliada(query) {
-    if (!query || query.length < 3) return [];
-
-    // Traer todos los productos activos (una sola vez)
-    if (!window._productosTodosFonetica) {
-        try {
-            console.log('📥 Descargando todos los productos para fonética...');
-            const todos = [];
-            let page = 1;
-            const pageSize = 500;
-
-            while (page <= 40) {   // límite 20k productos
-                const resp = await api.get(`/Productos?page=${page}&pageSize=${pageSize}`);
-                if (!resp.ok || !resp.data || resp.data.length === 0) break;
-
-                todos.push(...resp.data.filter(p => p.estado === 'Activo'));
-                if (resp.data.length < pageSize) break;
-                page++;
-            }
-
-            window._productosTodosFonetica = todos;
-            console.log(`✅ ${todos.length} productos cargados para fonética`);
-        } catch (e) {
-            console.warn('Error cargando productos para fonética:', e);
-            return [];
-        }
+function cachearYMostrar(cacheKey, resultados) {
+    if (_busquedaCacheGlobal.size >= 20) {
+        const primeraClave = _busquedaCacheGlobal.keys().next().value;
+        _busquedaCacheGlobal.delete(primeraClave);
     }
+    _busquedaCacheGlobal.set(cacheKey, resultados);
+    mostrarResultadosBusqueda(resultados);
+}
 
-    const items = window._productosTodosFonetica.map(p => ({
-        idProducto: p.idProducto,
-        nombre: p.nombre,
-        sku: p.sku || p.codigoInterno || '',
-        categoria: p.categoriaNombre || '',
-        vecesVendido: p.vecesVendido || 0,
-        _ref: p
-    }));
-
-    const encontrados = Buscador.buscar(query, items, { minScore: 15 });
-    return encontrados.slice(0, 50);
+/* ============================================================
+   🆕 Helper: cachear y mostrar
+   ============================================================ */
+function cachearYMostrar(cacheKey, resultados) {
+    // Limitar tamaño del caché
+    if (_busquedaCacheGlobal.size >= 20) {
+        const primeraClave = _busquedaCacheGlobal.keys().next().value;
+        _busquedaCacheGlobal.delete(primeraClave);
+    }
+    _busquedaCacheGlobal.set(cacheKey, resultados);
+    mostrarResultadosBusqueda(resultados);
 }
 
 /* ============================================================
    RENDER DE RESULTADOS EN EL CATÁLOGO
    ============================================================ */
+// En App.js, modifica mostrarResultadosBusqueda para que no dependa de variables globales:
 function mostrarResultadosBusqueda(resultados) {
     const contenedor = document.getElementById('catalogoProductos');
     if (!contenedor) return;
@@ -609,146 +753,206 @@ function mostrarResultadosBusqueda(resultados) {
 
     contenedor.innerHTML = unicos.map(r => renderCardProducto(r._ref || r)).join('');
 
-    // 🆕 Actualizar el dropdown de sugerencias
-    if (window._sugerenciasPanelCatalogo && window._inputBuscadorCatalogo?.value) {
-        const input = window._inputBuscadorCatalogo;
-        const panel = window._sugerenciasPanelCatalogo;
+    // Actualizar el dropdown de sugerencias (si existe)
+    const panel = window._sugerenciasPanelCatalogo;
+    const input = window._inputBuscadorCatalogo;
+    if (panel && input && input.value.trim().length >= 2) {
+        const top5 = unicos.slice(0, 5);
+        panel.innerHTML = top5.map((item, i) => {
+            const nombreHtml = typeof Buscador.resaltar === 'function'
+                ? Buscador.resaltar(item.nombre || '', item._coincidencias || [])
+                : escapeHtml(item.nombre || '');
+            return `
+                <div class="sugerencia-item" data-index="${i}">
+                    <span class="sugerencia-indice">${i + 1}</span>
+                    <span class="sugerencia-nombre">${nombreHtml}</span>
+                    <span class="sugerencia-sku">${escapeHtml(item.sku || '')}</span>
+                </div>
+            `;
+        }).join('');
+        panel.style.display = top5.length > 0 ? 'block' : 'none';
 
-        // Solo si el input tiene texto
-        if (input.value.trim().length >= 2) {
-            const top5 = unicos.slice(0, 5);
-            panel.innerHTML = top5.map((item, i) => {
-                const nombreHtml = typeof Buscador.resaltar === 'function'
-                    ? Buscador.resaltar(item.nombre || '', item._coincidencias || [])
-                    : escapeHtml(item.nombre || '');
-
-                return `
-                    <div class="sugerencia-item" data-index="${i}">
-                        <span class="sugerencia-indice">${i + 1}</span>
-                        <span class="sugerencia-nombre">${nombreHtml}</span>
-                        <span class="sugerencia-sku">${escapeHtml(item.sku || '')}</span>
-                    </div>
-                `;
-            }).join('');
-            panel.style.display = top5.length > 0 ? 'block' : 'none';
-
-            // Enganchar clicks
-            panel.querySelectorAll('.sugerencia-item').forEach((el, i) => {
-                el.onclick = (e) => {
-                    e.stopPropagation();
-                    const item = top5[i];
-                    if (item && item._ref) {
-                        // Simular click en el botón "+ Agregar" del card
-                        const card = document.querySelector(`.producto[data-id-producto="${item._ref.idProducto}"]`);
-                        if (card) {
-                            const btn = card.querySelector('.agregar');
-                            if (btn && !btn.disabled) btn.click();
-                        }
+        panel.querySelectorAll('.sugerencia-item').forEach((el, i) => {
+            el.onclick = (e) => {
+                e.stopPropagation();
+                const item = top5[i];
+                if (item && item._ref) {
+                    const card = document.querySelector(`.producto[data-id-producto="${item._ref.idProducto}"]`);
+                    if (card) {
+                        const btn = card.querySelector('.agregar');
+                        if (btn && !btn.disabled) btn.click();
                     }
-                    panel.style.display = 'none';
-                };
-            });
-        } else {
-            panel.style.display = 'none';
-        }
+                }
+                panel.style.display = 'none';
+            };
+        });
+    } else if (panel) {
+        panel.style.display = 'none';
     }
 
     if (typeof refrescarStockCatalogo === 'function') {
         setTimeout(() => refrescarStockCatalogo(), 0);
     }
 }
-
-
-async function cargarProductosDesdeAPI(reset = true) {
-    if (estado._cargandoProductos) return;
-
-    const contenedor = document.getElementById('catalogoProductos');
-    if (!contenedor) return;
+async function cargarProductosDesdeAPI(forzar = false) {
+    if (estado._cargandoProductos) {
+        console.log('⏳ Carga de productos ya en curso');
+        return;
+    }
 
     const token = localStorage.getItem('pos_token');
     if (!token) return;
 
-    // Reset si es primera carga
-    if (reset) {
-        _catalogoEstado.pagina = 1;
-        _catalogoEstado.total = 0;
-        _catalogoEstado.hayMas = true;
-        _catalogoEstado._scrollIniciado = false;
-        contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">Cargando catálogo...</p>`;
-        estado.productos = [];
-    }
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
 
-    if (!_catalogoEstado.hayMas || _catalogoEstado.cargando) return;
-
-    _catalogoEstado.cargando = true;
     estado._cargandoProductos = true;
 
-    // Mostrar indicador de carga al final si es carga adicional
-    if (!reset) {
-        mostrarIndicadorCargaMas(contenedor);
-    }
-
-    // Construir query
-    const params = new URLSearchParams({
-        page: _catalogoEstado.pagina,
-        pageSize: CATALOGO_PAGE_SIZE
-    });
-    if (_catalogoEstado.categoriaId) params.append('categoriaId', _catalogoEstado.categoriaId);
-    if (_catalogoEstado.busqueda) params.append('buscar', _catalogoEstado.busqueda);
-
     try {
-        const resp = await api.get(`/Productos/catalogo?${params.toString()}`);
+        const productos = await cargarTopUnaVez(forzar);
 
-        if (!resp.ok) {
-            if (reset) {
-                contenedor.innerHTML = `<p style="text-align:center;color:#dc2626;padding:20px;">Error al cargar productos.</p>`;
-            }
+        // 🆕 Si no hay productos, mostrar mensaje y salir
+        if (!productos || productos.length === 0) {
+            contenedor.innerHTML = `
+                <div style="grid-column:1/-1; text-align:center; padding:60px 20px; color:var(--text-muted);">
+                    <div style="font-size:48px; opacity:0.5; margin-bottom:12px;">📦</div>
+                    <div style="font-weight:600; font-size:16px; margin-bottom:6px;">
+                        No hay productos en el catálogo
+                    </div>
+                    <div style="font-size:13px;">
+                        Importa productos para comenzar a vender
+                    </div>
+                </div>`;
             return;
         }
 
-        const data = resp.data;
-        const productos = data.items || [];
+        contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
 
-        // Acumular productos
-        estado.productos = reset ? productos : [...estado.productos, ...productos];
-
-        _catalogoEstado.total = data.total;
-        _catalogoEstado.hayMas = data.hayMas;
-        _catalogoEstado.pagina++;
-
-        // Render
-        if (reset) {
-            contenedor.innerHTML = productos.length === 0
-                ? `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos activos.</p>`
-                : productos.map(p => renderCardProducto(p)).join('');
-        } else {
-            quitarIndicadorCargaMas(contenedor);
-            contenedor.insertAdjacentHTML('beforeend', productos.map(p => renderCardProducto(p)).join(''));
-        }
-
-        // Aplicar filtro activo si hay
         if (estado.terminoBusqueda) {
             filtrarCatalogo(estado.terminoBusqueda);
         }
 
-        // Refrescar stock
         if (typeof refrescarStockCatalogo === 'function') {
             refrescarStockCatalogo();
         }
 
-        // Configurar scroll infinito
-        configurarScrollInfinito(contenedor);
+        refrescarBuscador();
 
-        // Actualizar info de "mostrando X de Y"
-        actualizarInfoCatalogo();
+        if (!window._catalogoCompletoSolicitado && productos.length > 0) {
+            window._catalogoCompletoSolicitado = true;
+            cargarCatalogoCompletoEnBackground();
+        }
 
-        console.log(`✅ Catálogo: ${productos.length} productos (página ${_catalogoEstado.pagina - 1}/${data.totalPages}, total ${data.total})`);
     } finally {
-        _catalogoEstado.cargando = false;
         estado._cargandoProductos = false;
     }
 }
+function refrescarBuscador() {
+    if (typeof BuscadorUI === 'undefined') return;
 
+    const input = document.getElementById('buscador');
+    if (!input) return;
+
+    // 🆕 Si tiene API y método refresh, usarlo
+    if (input._buscadorAPI && typeof input._buscadorAPI.refresh === 'function') {
+        setTimeout(() => {
+            // ⚠️ CRÍTICO: Re-verificar DENTRO del setTimeout
+            // porque _buscadorAPI puede haber cambiado
+            const inputActual = document.getElementById('buscador');
+            if (!inputActual) return;
+            
+            if (inputActual._buscadorAPI && 
+                typeof inputActual._buscadorAPI.refresh === 'function') {
+                try {
+                    inputActual._buscadorAPI.refresh();
+                } catch (e) {
+                    console.warn('⚠️ Error refrescando buscador:', e);
+                    // Fallback: reinicializar de cero
+                    inputActual.removeAttribute('data-buscador-ready');
+                    inputActual._buscadorAPI = null;
+                    setTimeout(() => BuscadorUI.init(), 50);
+                }
+            }
+        }, 50);
+        return;
+    }
+
+    // 🆕 Si no tiene API, reinicializar
+    input.removeAttribute('data-buscador-ready');
+    input._buscadorAPI = null;
+    setTimeout(() => BuscadorUI.init(), 50);
+}
+/**
+ * Extrae el HTML de un producto a una función separada.
+ * Útil porque se usa en varios lugares.
+ */
+function renderCardProducto(p) {
+    const precioFmt = formato(p.precioVenta);
+    const sku = p.sku || p.codigoInterno;
+    const stockColor = p.stockActual <= p.stockMinimo ? '#dc2626' : '#16a34a';
+    const agotado = p.stockActual <= 0;
+
+    return `
+        <div class="producto"
+            data-id-producto="${p.idProducto}"
+            data-nombre="${escapeHtml(p.nombre)}"
+            data-precio="${p.precioVenta}"
+            data-sku="${escapeHtml(sku)}"
+            data-stock="${p.stockActual}"
+            data-stock-base="${p.stockActual}"
+            data-categoria="${escapeHtml(p.categoriaNombre || '')}">
+            <div class="prod-info">
+                <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
+                <span class="prod-sku">${escapeHtml(sku)}</span>
+            </div>
+            <div class="prod-precio">${precioFmt}</div>
+            <div class="prod-stock" style="color:${stockColor};">
+                ${agotado ? '⛔ Agotado' : `📦 ${p.stockActual} disponibles`}
+            </div>
+            <button class="btn agregar" ${agotado ? 'disabled' : ''}>
+                ${agotado ? 'Agotado' : '+ Agregar'}
+            </button>
+        </div>
+    `;
+}
+
+/**
+ * 🆕 Carga el catálogo completo (todos los productos) en background.
+ * NO bloquea la UI. Se guarda en localStorage.
+ */
+/* ============================================================
+   🆕 Catálogo completo en background — UNA SOLA VEZ por sesión
+   ============================================================ */
+async function cargarCatalogoCompletoEnBackground() {
+    // 🆕 Solo ejecutar una vez por sesión
+    if (window._catalogoCompletoCargado) {
+        console.log('⏭ Catálogo completo ya cargado en esta sesión');
+        return;
+    }
+
+    if (typeof Catalogo === 'undefined') {
+        console.warn('⚠️ Catalogo.js no está cargado');
+        return;
+    }
+
+    window._catalogoCompletoCargado = true;
+    console.log('📥 Iniciando carga del catálogo completo en segundo plano...');
+
+    try {
+        const todos = await Catalogo.cargarCompleto();
+        if (todos && todos.length > 0) {
+            console.log(`✅ Catálogo completo listo en background (${todos.length} productos)`);
+
+            if (typeof toast === 'function') {
+                toast(`📥 Catálogo completo listo (${todos.length} productos)`, 'success');
+            }
+        }
+    } catch (err) {
+        console.warn('⚠️ Error cargando catálogo en background:', err);
+        // Permitir reintento si falló
+        window._catalogoCompletoCargado = false;
+    }
+}
 function renderCardProducto(p) {
     const precioFmt = formato(p.precioVenta);
     const sku = p.sku || p.codigoInterno;
@@ -847,22 +1051,63 @@ function configurarScrollInfinito(contenedor) {
 }
 
 /* ============================================================
-   FILTRO POR CATEGORÍA — Server-side
+   Filtro por categoría — SIN recargar el TOP
+   Filtra en memoria usando estado.productos
    ============================================================ */
 async function aplicarFiltroCategoria(categoriaId) {
     _catalogoEstado.categoriaId = categoriaId || null;
-    await cargarProductosDesdeAPI(true);
+
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const productos = estado.productos || [];
+    let filtrados = categoriaId 
+        ? productos.filter(p => p.idCategoria === categoriaId)
+        : productos;
+
+    if (filtrados.length === 0) {
+        contenedor.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:40px 20px; color:var(--text-muted);">
+                <div style="font-size:36px; opacity:0.5; margin-bottom:8px;">📂</div>
+                <div style="font-weight:600;">No hay productos en esta categoría</div>
+            </div>`;
+        return;
+    }
+
+    contenedor.innerHTML = filtrados.map(p => renderCardProducto(p)).join('');
+
+    // Aplicar búsqueda activa encima del filtro
+    if (estado.terminoBusqueda?.trim()) {
+        filtrarCatalogo(estado.terminoBusqueda);
+    }
+
+    if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+    if (typeof refrescarBuscador === 'function') refrescarBuscador();
+
+    console.log(`📂 Filtro aplicado: ${filtrados.length} productos (categoría ${categoriaId || 'todas'})`);
 }
 
 /* ============================================================
-   BÚSQUEDA — Server-side con debounce
+   Búsqueda server-side con debounce
+   NO recarga el TOP, solo busca resultados específicos
    ============================================================ */
-let _busquedaTimeout = null;
+let _busquedaServerSideTimeout = null;
+
 function buscarProductosServerSide(termino) {
-    clearTimeout(_busquedaTimeout);
-    _busquedaTimeout = setTimeout(async () => {
+    clearTimeout(_busquedaServerSideTimeout);
+    
+    _busquedaServerSideTimeout = setTimeout(async () => {
         _catalogoEstado.busqueda = termino || '';
-        await cargarProductosDesdeAPI(true);
+
+        // 🆕 NO recargar el top, delegar a buscarEnServidor
+        if (!termino || termino.trim().length < 2) {
+            // Si está vacío, solo re-renderizar desde memoria
+            rerenderizarCatalogoDesdeMemoria();
+            return;
+        }
+
+        // Buscar sin recargar el top
+        await buscarEnServidor(termino);
     }, 400);
 }
 
@@ -1000,20 +1245,29 @@ async function poblarFiltroCategorias() {
     }
 
     const seleccionActual = select.value;
-    const resp = await api.get('/Productos/categorias-resumen');
-    if (!resp.ok) return;
 
-    const categorias = resp.data || [];
+    try {
+        const resp = await api.get('/Productos/categorias-resumen');
+        if (!resp.ok) {
+            console.warn('⚠️ No se pudieron cargar las categorías');
+            return;
+        }
 
-    select.innerHTML = '<option value="">📂 Todas las categorías</option>' +
-        categorias
-            .filter(c => c.cantidadProductos > 0)
-            .map(c =>
-                `<option value="${c.idCategoria}">${escapeHtml(c.nombre)} (${c.cantidadProductos})</option>`
-            ).join('');
+        const categorias = resp.data || [];
 
-    select.value = seleccionActual;
-    console.log(`📂 ${categorias.length} categorías cargadas`);
+        select.innerHTML = '<option value="">📂 Todas las categorías</option>' +
+            categorias
+                .filter(c => c.cantidadProductos > 0)
+                .map(c =>
+                    `<option value="${c.idCategoria}">${escapeHtml(c.nombre)} (${c.cantidadProductos})</option>`
+                ).join('');
+
+        select.value = seleccionActual;
+        select._cargado = true;
+        console.log(`📂 ${categorias.length} categorías cargadas`);
+    } catch (e) {
+        console.error('❌ Error poblando categorías:', e);
+    }
 }
 /* ============================================================
    7. BUSCADOR DEL CATÁLOGO DE VENTAS
@@ -1050,42 +1304,51 @@ function filtrarCatalogo(texto) {
     });
 }
 
-/* ============================================================
-   8. VENTAS (TABS + CARRITO)
-   ============================================================ */
-
 async function initVentas() {
     const token = localStorage.getItem('pos_token');
-    if (!token) {
-        console.log('⚠️ Sin sesión, no se inicializa Ventas');
-        return;
+    if (!token) return;
+
+    // Reset SOLO la primera vez por sesión
+    if (!estado._ventasInited) {
+        _catalogoEstado = {
+            pagina: 1, total: 0, hayMas: true, cargando: false,
+            categoriaId: null, busqueda: '', observer: null, _scrollIniciado: false
+        };
     }
-    
-     // 🆕 Precargar top 1000 en background (SIN await, no bloquea)
-    precargarTop1000();
 
-    // 🆕 Reset del estado del catálogo al entrar
-    _catalogoEstado = {
-        pagina: 1,
-        total: 0,
-        hayMas: true,
-        cargando: false,
-        categoriaId: null,
-        busqueda: '',
-        observer: null
-    };
+    // ============================================================
+    // 🆕 SOLO CARGAR SI ES NECESARIO
+    // ============================================================
+    const contenedor = document.getElementById('catalogoProductos');
+    const necesitaCargar = !estado.productos.length || estado._productosCacheInvalidado;
 
-    // 🆕 Siempre recargar productos al entrar (con await)
-    await cargarProductosDesdeAPI(true);
+    if (necesitaCargar) {
+        console.log('📥 Cargando productos (necesario)');
+        await cargarProductosDesdeAPI(true);
+    } else if (contenedor && contenedor.children.length === 0) {
+        // Ya hay productos en memoria → solo renderizar
+        console.log(`⚡ Renderizando ${estado.productos.length} productos desde memoria`);
+        contenedor.innerHTML = estado.productos.map(p => renderCardProducto(p)).join('');
+        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+    } else {
+        console.log(`⏭ Productos ya renderizados (${estado.productos.length} en memoria)`);
+    }
 
-    // 🆕 Poblar filtro de categorías (server-side)
+    // Poblar filtro de categorías (solo una vez)
     await poblarFiltroCategorias();
 
-    // Refrescar stock por si hay carritos guardados
-    setTimeout(() => {
-        if (typeof refrescarStockCatalogo === 'function') {
-            refrescarStockCatalogo();
+    // Configurar el buscador
+    if (typeof BuscadorUI !== 'undefined') {
+        const inputBuscador = document.getElementById('buscador');
+        if (inputBuscador) {
+            inputBuscador.removeAttribute('data-buscador-ready');
+            inputBuscador._buscadorAPI = null;
         }
+        setTimeout(() => BuscadorUI.init(), 150);
+    }
+
+    setTimeout(() => {
+        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
     }, 500);
 
     if (estado._ventasInited) {
@@ -1109,7 +1372,6 @@ async function initVentas() {
     initSplitter();
     activarPestaña(estado.pestañaActiva || 'venta1');
 }
-
 function setupTabsListener() {
     const tabs = document.getElementById('tabs');
     if (!tabs || tabs._listenerAttached) return;
@@ -1295,6 +1557,13 @@ function setupBuscadorCatalogo() {
     buscador._listenerAttached = true;
 
     // ============================================================
+    // 🆕 DECLARAR VARIABLES DE DEBOUNCE (AQUÍ, fuera del listener)
+    // ============================================================
+    let _busquedaTimeout = null;              // Debounce para servidor
+    let _busquedaIndexedDBTimeout = null;     // Debounce para IndexedDB
+    let indiceNavegacion = -1;                // Navegación con teclado
+
+    // ============================================================
     // 1. FILTRO DE CATEGORÍA — Server-side
     // ============================================================
     const selectCategoria = document.getElementById('filtroCategoria');
@@ -1313,11 +1582,10 @@ function setupBuscadorCatalogo() {
     if (btnClear) {
         btnClear.style.display = buscador.value ? 'block' : 'none';
     }
-    // ============================================================
-    // 3. BÚSQUEDA — Híbrida: local (top+catalogo) → server si hace falta
-    // ============================================================
-    let _busquedaTimeout = null;
 
+    // ============================================================
+    // LISTENER PRINCIPAL DEL BUSCADOR
+    // ============================================================
     buscador.addEventListener('input', () => {
         const valor = buscador.value.trim();
 
@@ -1327,27 +1595,39 @@ function setupBuscadorCatalogo() {
         if (btnClear) btnClear.style.display = valor ? 'block' : 'none';
         indiceNavegacion = -1;
 
-        // Vacío → recargar catálogo normal
+        // ============================================================
+        // CASO 1: BUSCADOR VACÍO → RESTAURAR TOP DESDE MEMORIA
+        // 🆕 NO llama a la API. Solo re-renderiza.
+        // ============================================================
         if (!valor) {
             clearTimeout(_busquedaTimeout);
+            clearTimeout(_busquedaIndexedDBTimeout);
             _catalogoEstado.busqueda = '';
-            cargarProductosDesdeAPI(true);
+
+            console.log('🔄 Restaurando catálogo completo desde memoria...');
+            rerenderizarCatalogoDesdeMemoria();   // 🆕 Helper que veremos abajo
             return;
         }
 
-        // Escaneo de código de barras → server directo
+        // ============================================================
+        // CASO 2: ESCANEO DE CÓDIGO DE BARRAS → servidor directo
+        // ============================================================
         if (valor.length >= 8 && /^\d+$/.test(valor)) {
             clearTimeout(_busquedaTimeout);
+            clearTimeout(_busquedaIndexedDBTimeout);
             buscarEnServidor(valor);
             return;
         }
 
-        // Búsqueda LOCAL instantánea
+        // ============================================================
+        // CASO 3: BÚSQUEDA LOCAL INSTANTÁNEA (memoria)
+        // ============================================================
         const locales = buscarLocal(valor);
 
         if (locales.length >= 3) {
             mostrarResultadosBusqueda(locales);
             clearTimeout(_busquedaTimeout);
+            // Buscar más en background (silencioso)
             _busquedaTimeout = setTimeout(() => buscarEnServidor(valor, true), 500);
             return;
         }
@@ -1356,53 +1636,87 @@ function setupBuscadorCatalogo() {
             mostrarResultadosBusqueda(locales);
         }
 
-        clearTimeout(_busquedaTimeout);
-        _busquedaTimeout = setTimeout(() => buscarEnServidor(valor), 350);
-    });
+        // ============================================================
+        // CASO 4: BÚSQUEDA EN INDEXEDDB (con debounce)
+        // ============================================================
+        if (locales.length === 0 && valor.length >= 3) {
+            clearTimeout(_busquedaIndexedDBTimeout);
+            _busquedaIndexedDBTimeout = setTimeout(async () => {
+                if (typeof CatalogoDB === 'undefined' || 
+                    typeof CatalogoDB.buscarPorTexto !== 'function') {
+                    return;
+                }
 
+                console.log(`🔍 Buscando en IndexedDB: "${valor}"...`);
+                const t0 = performance.now();
+
+                try {
+                    const resultadosDB = await CatalogoDB.buscarPorTexto(valor, 50);
+                    const tiempo = Math.round(performance.now() - t0);
+
+                    if (resultadosDB && resultadosDB.length > 0) {
+                        console.log(`✅ IndexedDB: ${resultadosDB.length} resultados en ${tiempo}ms`);
+
+                        const formateados = resultadosDB.map(p => ({
+                            idProducto: p.idProducto,
+                            nombre: p.nombre,
+                            sku: p.sku || p.codigoInterno || '',
+                            categoria: p.categoriaNombre || '',
+                            vecesVendido: p.vecesVendido || 0,
+                            _ref: p
+                        }));
+
+                        mostrarResultadosBusqueda(formateados);
+                    } else {
+                        console.log(`⚠️ IndexedDB: 0 resultados en ${tiempo}ms`);
+                        mostrarSinResultados();
+                    }
+                } catch (e) {
+                    console.warn('⚠️ Error buscando en IndexedDB:', e);
+                }
+            }, 200);
+        }
+
+        // ============================================================
+        // CASO 5: SERVIDOR (fallback final)
+        // ============================================================
+        clearTimeout(_busquedaTimeout);
+        _busquedaTimeout = setTimeout(() => buscarEnServidor(valor), 400);
+    });
     // ============================================================
-    // 4. BOTÓN CLEAR
+    // BOTÓN CLEAR — Restaura el top SIN llamar a la API
     // ============================================================
     if (btnClear && !btnClear._clearAttached) {
         btnClear._clearAttached = true;
-        btnClear.addEventListener('click', async () => {
+        btnClear.addEventListener('click', () => {
+            console.log('🧹 Limpiando búsqueda, restaurando desde memoria...');
+
             buscador.value = '';
             estado.terminoBusqueda = '';
             btnClear.style.display = 'none';
             guardarEstado();
 
             _catalogoEstado.busqueda = '';
-            await cargarProductosDesdeAPI(true);
+
+            // 🆕 SOLO re-renderizar desde memoria (NO llamar a la API)
+            rerenderizarCatalogoDesdeMemoria();
 
             buscador.focus();
         });
     }
 
+
     // ============================================================
     // 5. NAVEGACIÓN CON TECLADO (↑ ↓ Enter Escape)
+    //    NOTA: El dropdown de sugerencias lo maneja BuscadorUI.js
     // ============================================================
-    let indiceNavegacion = -1;
-
+   
     buscador.addEventListener('keydown', (e) => {
         const contenedor = document.getElementById('catalogoProductos');
         if (!contenedor) return;
 
         const productosVisibles = Array.from(contenedor.querySelectorAll('.producto'))
             .filter(c => c.style.display !== 'none');
-
-                // --- Ctrl+1 a Ctrl+5: agregar sugerencia N ---
-        if (e.ctrlKey && /^[1-5]$/.test(e.key)) {
-            e.preventDefault();
-            const panel = window._sugerenciasPanelCatalogo;
-            if (panel && panel.style.display === 'block') {
-                const items = panel.querySelectorAll('.sugerencia-item');
-                const idx = parseInt(e.key, 10) - 1;
-                if (items[idx]) {
-                    items[idx].click();
-                }
-            }
-            return;
-        }    
 
         // --- ArrowDown ---
         if (e.key === 'ArrowDown') {
@@ -1442,17 +1756,21 @@ function setupBuscadorCatalogo() {
                 }
             }
             return;
-        }
-
-        // --- Escape ---
+        }        
+        // ESCAPE — Restaura el top SIN llamar a la API
+        // ============================================================
         if (e.key === 'Escape') {
+            console.log('⌨️ Escape presionado, restaurando desde memoria...');
+
             buscador.value = '';
             estado.terminoBusqueda = '';
-            btnClear && (btnClear.style.display = 'none');
+            if (btnClear) btnClear.style.display = 'none';
             guardarEstado();
 
             _catalogoEstado.busqueda = '';
-            cargarProductosDesdeAPI(true);
+
+            // 🆕 SOLO re-renderizar desde memoria (NO llamar a la API)
+            rerenderizarCatalogoDesdeMemoria();
 
             indiceNavegacion = -1;
             return;
@@ -1469,153 +1787,6 @@ function setupBuscadorCatalogo() {
         card.classList.add('kbd-active');
         card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-    // ============================================================
-    // 6.5. DROPDOWN DE SUGERENCIAS (integrado con búsqueda híbrida)
-    // ============================================================
-    const sugerenciasPanel = document.createElement('div');
-    sugerenciasPanel.className = 'buscador-sugerencias';
-    sugerenciasPanel.style.display = 'none';
-    buscador.parentElement.style.position = 'relative';
-    buscador.parentElement.appendChild(sugerenciasPanel);
-
-    // Guardar referencia global para que mostrarResultadosBusqueda() la use
-    window._sugerenciasPanelCatalogo = sugerenciasPanel;
-    window._inputBuscadorCatalogo = buscador;
-
-    function renderSugerencias(items) {
-        if (!items || items.length === 0) {
-            sugerenciasPanel.style.display = 'none';
-            return;
-        }
-
-        sugerenciasPanel.innerHTML = items.slice(0, 5).map((item, i) => {
-            const nombreHtml = typeof Buscador.resaltar === 'function'
-                ? Buscador.resaltar(item.nombre || '', item._coincidencias || [])
-                : escapeHtml(item.nombre || '');
-
-            return `
-                <div class="sugerencia-item" data-index="${i}">
-                    <span class="sugerencia-indice">${i + 1}</span>
-                    <span class="sugerencia-nombre">${nombreHtml}</span>
-                    <span class="sugerencia-sku">${escapeHtml(item.sku || '')}</span>
-                </div>
-            `;
-        }).join('');
-
-        sugerenciasPanel.style.display = 'block';
-
-        sugerenciasPanel.querySelectorAll('.sugerencia-item').forEach((el, i) => {
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                seleccionarSugerencia(items[i]);
-            });
-            el.addEventListener('mouseenter', () => {
-                sugerenciasPanel.querySelectorAll('.sugerencia-item.active')
-                    .forEach(x => x.classList.remove('active'));
-                el.classList.add('active');
-            });
-        });
-    }
-
-    function seleccionarSugerencia(item) {
-        if (!item) return;
-
-        // Buscar el card correspondiente en el catálogo
-        const idProducto = item.idProducto || (item._ref && item._ref.idProducto);
-        const card = document.querySelector(`.producto[data-id-producto="${idProducto}"]`);
-
-        if (card) {
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            card.classList.add('buscador-destacado');
-            setTimeout(() => card.classList.remove('buscador-destacado'), 1500);
-        } else {
-            // Si el card no está en el DOM, agregar directamente al carrito
-            agregarItemAlCarritoDesdeSugerencia(item);
-        }
-
-        sugerenciasPanel.style.display = 'none';
-        buscador.focus();
-    }
-
-    // Helper para agregar al carrito desde sugerencia
-    function agregarItemAlCarritoDesdeSugerencia(item) {
-        const ref = item._ref || item;
-        if (!ref || !ref.idProducto) return;
-
-        const ventaId = estado.pestañaActiva || 'venta1';
-        if (!estado.carritos[ventaId]) return;
-
-        const sku = String(ref.sku || ref.codigoInterno || '').trim();
-        if (!sku) return;
-
-        // Verificar si ya existe en carrito
-        const itemCarrito = estado.carritos[ventaId].find(i =>
-            String(i.sku || '').trim().toUpperCase() === sku.toUpperCase()
-        );
-
-        if (itemCarrito) {
-            itemCarrito.cantidad += 1;
-        } else {
-            estado.carritos[ventaId].push({
-                idProducto: ref.idProducto,
-                sku,
-                nombre: ref.nombre || 'Producto',
-                precio: parseFloat(ref.precioVenta) || 0,
-                cantidad: 1,
-                stock: ref.stockActual || 0
-            });
-        }
-
-        if (typeof renderCarrito === 'function') renderCarrito(ventaId);
-        if (typeof guardarEstado === 'function') guardarEstado();
-        if (typeof actualizarConteos === 'function') actualizarConteos();
-        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
-
-        if (typeof toast === 'function') {
-            toast(`✅ "${ref.nombre}" agregado`);
-        }
-    }
-
-    // Cerrar dropdown al hacer click afuera
-    document.addEventListener('click', (e) => {
-        if (!buscador.parentElement.contains(e.target)) {
-            sugerenciasPanel.style.display = 'none';
-        }
-    });
-
-    // Navegación con flechas en el dropdown
-    buscador.addEventListener('keydown', (e) => {
-        if (sugerenciasPanel.style.display !== 'block') return;
-
-        const items = sugerenciasPanel.querySelectorAll('.sugerencia-item');
-        if (items.length === 0) return;
-        const activo = sugerenciasPanel.querySelector('.sugerencia-item.active');
-
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            const idx = activo ? Array.from(items).indexOf(activo) : -1;
-            if (idx < items.length - 1) {
-                activo?.classList.remove('active');
-                items[idx + 1].classList.add('active');
-                items[idx + 1].scrollIntoView({ block: 'nearest' });
-            }
-        }
-
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            const idx = activo ? Array.from(items).indexOf(activo) : items.length;
-            if (idx > 0) {
-                activo?.classList.remove('active');
-                items[idx - 1].classList.add('active');
-                items[idx - 1].scrollIntoView({ block: 'nearest' });
-            }
-        }
-
-        if (e.key === 'Enter' && activo) {
-            e.preventDefault();
-            activo.click();
-        }
-    });
 
     // ============================================================
     // 7. HINT VISUAL DEL BUSCADOR
@@ -1626,28 +1797,33 @@ function setupBuscadorCatalogo() {
     if (hint && buscadorEl && !hint._attached) {
         hint._attached = true;
 
-        // Ocultar al enfocar
+        function actualizarHint() {
+            const estaVacio = buscadorEl.value.trim().length === 0;
+            const tieneFoco = document.activeElement === buscadorEl;
+            const nuncaUsado = !localStorage.getItem('pos_hint_visto');
+
+            if (estaVacio && (tieneFoco || nuncaUsado)) {
+                hint.classList.remove('oculto');
+            } else {
+                hint.classList.add('oculto');
+            }
+        }
+
         buscadorEl.addEventListener('focus', () => {
+            localStorage.setItem('pos_hint_visto', '1');
+            actualizarHint();
+        });
+
+        hint.classList.add('oculto');
+
+        buscadorEl.addEventListener('focus', actualizarHint);
+
+        buscadorEl.addEventListener('blur', () => {
             hint.classList.add('oculto');
         });
 
-        // Mostrar solo si está vacío al perder foco
-        buscadorEl.addEventListener('blur', () => {
-            if (buscadorEl.value.trim().length === 0) {
-                hint.classList.remove('oculto');
-            }
-        });
+        buscadorEl.addEventListener('input', actualizarHint);
 
-        // Ocultar/mostrar según contenido
-        buscadorEl.addEventListener('input', () => {
-            if (buscadorEl.value.trim().length > 0) {
-                hint.classList.add('oculto');
-            } else {
-                hint.classList.remove('oculto');
-            }
-        });
-
-        // Ocultar al cargar si ya hay término de búsqueda guardado
         if (buscadorEl.value.trim().length > 0) {
             hint.classList.add('oculto');
         }
@@ -1739,8 +1915,7 @@ function crearVentaUI(idVenta, numero) {
     }
 
     renderCarrito(idVenta);
-    actualizarConteos();
-    refrescarStockCatalogo();
+    actualizarConteos();    
 }
 
 function crearVentaNueva() {
@@ -1774,8 +1949,7 @@ function activarPestaña(id) {
     estado.pestañaActiva = id;
     renderCarrito(id);
     guardarEstado();
-    actualizarConteos();
-    refrescarStockCatalogo(); 
+    actualizarConteos();    
 }
 
 function cerrarPestaña(id) {
@@ -2156,53 +2330,115 @@ function actualizarConteos() {
    10. ESCÁNER DE CÓDIGO DE BARRAS
    ============================================================ */
 
+/* ============================================================
+   ESCÁNER DE CÓDIGO DE BARRAS — Versión con IndexedDB
+   Busca en este orden:
+   1. Catálogo IndexedDB (índice rápido por SKU)
+   2. TOP 2000 en memoria
+   3. Servidor (último recurso)
+   ============================================================ */
 async function manejarEscaneo(codigo) {
     if (!codigo) return;
 
     const codigoLimpio = codigo.trim().toUpperCase();
-    console.log(`📷 Buscando producto con código: "${codigoLimpio}"`);
+    console.log(`📷 Buscando: "${codigoLimpio}"`);
 
+    // Verificar sesión
     if (!localStorage.getItem('pos_token')) {
-        console.warn('⚠️ Escaneo ignorado: sin sesión');
+        console.warn('⚠️ Sin sesión activa');
         return;
     }
 
+    // Verificar carrito activo
     const ventaId = estado.pestañaActiva || 'venta1';
     if (!estado.carritos[ventaId]) {
         toast('No hay un carrito activo', 'error');
         return;
     }
 
-    let producto = estado.productos.find(p => {
-        const sku = (p.sku || '').trim().toUpperCase();
-        const codigoInterno = (p.codigoInterno || '').trim().toUpperCase();
-        return sku === codigoLimpio || codigoInterno === codigoLimpio;
-    });
+    let producto = null;
+    let origenBusqueda = 'desconocido';
 
-    if (!producto) {
-        console.log('🔍 No está en memoria, consultando API...');
-        const resp = await api.get(`/Productos/search?q=${encodeURIComponent(codigoLimpio)}`);
-
-        if (resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
-            producto = resp.data.find(p =>
-                (p.sku && p.sku.toUpperCase() === codigoLimpio) ||
-                (p.codigoInterno && p.codigoInterno.toUpperCase() === codigoLimpio)
-            ) || resp.data[0];
+    // ============================================================
+    // 1. BUSCAR EN CATÁLOGO INDEXEDDB (con índice, muy rápido)
+    // ============================================================
+    if (typeof Catalogo !== 'undefined' && typeof Catalogo.buscarPorSku === 'function') {
+        try {
+            producto = await Catalogo.buscarPorSku(codigoLimpio);
+            if (producto) {
+                origenBusqueda = 'IndexedDB';
+                console.log('✅ Encontrado en IndexedDB');
+            }
+        } catch (e) {
+            console.warn('⚠️ Error consultando IndexedDB:', e);
         }
     }
 
+    // ============================================================
+    // 2. FALLBACK: BUSCAR EN EL TOP 2000 (memoria)
+    // ============================================================
     if (!producto) {
+        producto = estado.productos.find(p => {
+            const s = (p.sku || '').trim().toUpperCase();
+            const c = (p.codigoInterno || '').trim().toUpperCase();
+            return s === codigoLimpio || c === codigoLimpio;
+        }) || null;
+
+        if (producto) {
+            origenBusqueda = 'TOP en memoria';
+            console.log('✅ Encontrado en TOP 2000 (memoria)');
+        }
+    }
+
+    // ============================================================
+    // 3. FALLBACK: BUSCAR EN EL SERVIDOR (último recurso)
+    // ============================================================
+    if (!producto) {
+        console.log('🔍 Consultando servidor...');
+        try {
+            const resp = await api.get(`/Productos/search?q=${encodeURIComponent(codigoLimpio)}`);
+            if (resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+                // Buscar coincidencia exacta primero
+                producto = resp.data.find(p =>
+                    (p.sku && p.sku.toUpperCase() === codigoLimpio) ||
+                    (p.codigoInterno && p.codigoInterno.toUpperCase() === codigoLimpio)
+                );
+
+                // Si no hay coincidencia exacta, tomar el primero
+                if (!producto) producto = resp.data[0];
+
+                if (producto) {
+                    origenBusqueda = 'servidor';
+                    console.log('✅ Encontrado en servidor');
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ Error consultando servidor:', e);
+        }
+    }
+
+    // ============================================================
+    // 4. PRODUCTO NO ENCONTRADO
+    // ============================================================
+    if (!producto) {
+        console.warn(`❌ No se encontró: "${codigoLimpio}"`);
         toast(`❌ Producto no encontrado: ${codigoLimpio}`, 'error');
         reproducirBeep('error');
         return;
     }
 
+    // ============================================================
+    // 5. VALIDAR STOCK
+    // ============================================================
     if (producto.stockActual <= 0) {
         toast(`⛔ "${producto.nombre}" está agotado`, 'error');
         reproducirBeep('error');
         return;
     }
 
+    // ============================================================
+    // 6. AGREGAR AL CARRITO
+    // ============================================================
     agregarProducto(ventaId, {
         idProducto: producto.idProducto,
         nombre: producto.nombre,
@@ -2211,16 +2447,21 @@ async function manejarEscaneo(codigo) {
         stock: producto.stockActual
     });
 
+    console.log(`🛒 Agregado desde ${origenBusqueda}: ${producto.nombre}`);
     toast(`✅ ${producto.nombre} agregado`, 'success');
     reproducirBeep('ok');
     destacarProductoEnCarrito(producto.sku || producto.codigoInterno);
 
+    // ============================================================
+    // 7. LIMPIAR EL BUSCADOR SI TIENE TEXTO
+    // ============================================================
     const buscador = document.getElementById('buscador');
     if (buscador && buscador.value) {
         buscador.value = '';
         estado.terminoBusqueda = '';
         filtrarCatalogo('');
         guardarEstado();
+
         const btnClear = document.getElementById('btnClearSearch');
         if (btnClear) btnClear.style.display = 'none';
     }
@@ -2417,15 +2658,17 @@ async function confirmarVenta(e) {
     });
     guardarEstado();
 
-    // 🆕 Forzar recarga del top (los más vendidos pueden haber cambiado)
+    // 🆕 Invalidar caché y forzar UNA SOLA recarga del top
     estado._productosCacheInvalidado = true;
+    estado._ultimaCargaTop = 0;
+    _controlCargaTop.ultimaCargaExitosa = 0;
 
-    // Refrescar catálogo (los stocks cambiaron + nuevo orden del top)
-    await cargarProductosDesdeAPI();
+    // 🆕 UNA SOLA llamada (la promesa única deduplica si algo más la llama)
+    await cargarProductosDesdeAPI(true);
 
-        form.reset();
-        _ventaIdEnProceso = null;
-    }
+    form.reset();
+    _ventaIdEnProceso = null;
+}
 
 function setupFinalizarVentaModal() {
     const modal = document.getElementById('modalFinalizarVenta');
@@ -5748,36 +5991,42 @@ function ocultarProgreso() {
     if (cont) cont.style.display = 'none';
     if (fill) fill.style.width = '0%';
 }
+/* ============================================================
+   CALLBACK del escáner cuando se dispara desde el catálogo
+   (después de escribir un código y presionar Enter)
+   ============================================================ */
+async function onScanCatalogo(codigo, encontrados, input) {
+    console.log('🔫 Código escaneado:', codigo, '| Resultados:', encontrados?.length || 0);
 
-// ============================================================
-// Callback al escanear un código en el catálogo de Ventas
-// Se llama cuando el usuario presiona Enter después de "escanear".
-// ============================================================
-function onScanCatalogo(codigo, encontrados, input) {
-    console.log('🔫 Código escaneado:', codigo, '| Resultados:', encontrados.length);
+    if (!codigo) return;
 
-    if (!encontrados || encontrados.length === 0) {
-        toast(`Código "${codigo}" no encontrado`, 'error');
-        return;
+    // Si hay resultados del buscador, usar el primero
+    if (encontrados && encontrados.length > 0) {
+        const item = encontrados[0];
+        const elemento = item._el;
+
+        if (elemento) {
+            const btnAgregar = elemento.querySelector('.agregar');
+            if (btnAgregar && !btnAgregar.disabled) {
+                btnAgregar.click();
+                toast(`✅ "${item.nombre}" agregado al carrito`);
+                return;
+            } else {
+                toast(`"${item.nombre}" sin stock o no disponible`, 'error');
+                return;
+            }
+        }
     }
 
-    const item = encontrados[0];
-    const elemento = item._el;
+    // Si no hay resultados locales, delegar a manejarEscaneo (busca en IndexedDB/servidor)
+    await manejarEscaneo(codigo);
 
-    if (!elemento) {
-        toast('Producto no visible para agregar', 'error');
-        return;
-    }
-
-    const btnAgregar = elemento.querySelector('.agregar');
-    if (btnAgregar && !btnAgregar.disabled) {
-        btnAgregar.click();
-        toast(`✅ "${item.nombre}" agregado al carrito`);
-    } else {
-        toast(`"${item.nombre}" sin stock o no disponible`, 'error');
+    // Limpiar input
+    if (input) {
+        input.value = '';
+        if (typeof filtrarCatalogo === 'function') filtrarCatalogo('');
     }
 }
-
 function mostrarBotonCarritoSiAplica(vistaId) {
     const existente = document.getElementById('cartFab');
     const esDesktop = window.innerWidth > 900 && !document.documentElement.classList.contains('split-catalogo-full');
@@ -5985,7 +6234,7 @@ const ACCESOS_DEFAULT = ['ventas', 'historial', 'inventario'];
 function renderAccesosRapidos() {
     const contenedor = document.querySelector('.sidebar-quick-actions');
     if (!contenedor) {
-        console.warn('⚠️ No existe .sidebar-quick-actions en el HTML');
+        // Silenciar la advertencia (no es un error, solo informativo)
         return;
     }
 
@@ -6219,7 +6468,287 @@ window._verificarConsistenciaStock = () => {
         refrescarStockCatalogo();
     }
 };
+async function cargarCatalogoCompletoEnBackground() {
+    // 🆕 Solo ejecutar una vez por sesión
+    if (window._catalogoCompletoCargado) {
+        console.log('⏭ Catálogo completo ya cargado en esta sesión');
+        return;
+    }
 
+    if (typeof Catalogo === 'undefined') {
+        console.warn('⚠️ Catalogo.js no está cargado');
+        return;
+    }
+
+    window._catalogoCompletoCargado = true;
+    console.log('📥 Iniciando carga del catálogo completo en segundo plano...');
+
+    try {
+        const todos = await Catalogo.cargarCompleto();
+        if (todos && todos.length > 0) {
+            console.log(`✅ Catálogo completo listo en background (${todos.length} productos)`);
+
+            if (typeof toast === 'function') {
+                toast(`📥 Catálogo completo listo (${todos.length} productos)`, 'success');
+            }
+        }
+    } catch (err) {
+        console.warn('⚠️ Error cargando catálogo en background:', err);
+        window._catalogoCompletoCargado = false; // Permitir reintento
+    }
+}
+
+/* ============================================================
+   🆕 API PÚBLICA PARA INVALIDAR CACHÉ DEL TOP
+   Útil desde otros módulos o para debug manual.
+   ============================================================ */
+window.invalidarCacheTop = function () {
+    estado._productosCacheInvalidado = true;
+    estado._ultimaCargaTop = 0;
+    _controlCargaTop.ultimaCargaExitosa = 0;
+    console.log('🔄 Caché del top invalidado manualmente');
+};
+
+window.recargarTop = async function () {
+    window.invalidarCacheTop();
+    return await cargarProductosDesdeAPI(true);
+};
+
+window.verEstadoCacheTop = function () {
+    console.table({
+        'Productos en memoria': estado.productos.length,
+        'Cache invalidado': estado._productosCacheInvalidado,
+        'Última carga': new Date(_controlCargaTop.ultimaCargaExitosa).toLocaleTimeString(),
+        'Promesa en curso': _controlCargaTop.promesaEnCurso ? 'SÍ' : 'NO'
+    });
+};
+
+/* ============================================================
+   🆕 PANEL DE DEBUG (solo en desarrollo)
+   ============================================================ */
+if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
+    window.debug = {
+        // Estado del caché
+        cache: async () => await CatalogoDB.infoCache(),
+        
+        // Estado de la app
+        estado: () => ({
+            productos: estado.productos.length,
+            carrito: estado.carritos.venta1?.length || 0,
+            tabActiva: estado.pestañaActiva,
+            cacheInvalidado: estado._productosCacheInvalidado
+        }),
+        
+        // Buscar producto
+        buscar: async (sku) => {
+            const p = await CatalogoDB.buscarPorSku(sku);
+            console.log(p || '❌ No encontrado');
+            return p;
+        },
+        
+        // Benchmarks
+        bench: async () => {
+            console.log('=== BENCHMARK ===');
+            
+            console.time('Guardar 18k');
+            await CatalogoDB.guardarCompleto(await CatalogoDB.getProductos());
+            console.timeEnd('Guardar 18k');
+            
+            console.time('Buscar x100');
+            for (let i = 0; i < 100; i++) {
+                await CatalogoDB.buscarPorSku('L2745');
+            }
+            console.timeEnd('Buscar x100');
+        },
+        
+        // Limpiar
+        limpiar: async () => {
+            await CatalogoDB.limpiarCache();
+            console.log('✅ Caché limpiada');
+        },
+        
+        // Ayuda
+        help: () => {
+            console.log(`
+            🛠️ Comandos de debug:
+            debug.cache()      → Ver info del IndexedDB
+            debug.estado()     → Ver estado de la app
+            debug.buscar(sku)  → Buscar producto por SKU
+            debug.bench()      → Benchmark de guardado/búsqueda
+            debug.limpiar()    → Limpiar caché
+            `);
+        }    };
+    
+    console.log('🛠️ Debug panel listo. Escribe debug.help() para ver comandos.');
+}
+/* ============================================================
+   🆕 Restaura el catálogo completo desde memoria
+   Aplica filtros activos (categoría, búsqueda) sin llamar a la API
+   ============================================================ */
+function rerenderizarCatalogoDesdeMemoria() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    // Si no hay productos en memoria, mostrar mensaje
+    if (!estado.productos || estado.productos.length === 0) {
+        console.warn('⚠️ No hay productos en memoria para restaurar');
+        contenedor.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:40px 20px; color:var(--text-muted);">
+                <div style="font-size:36px; opacity:0.5; margin-bottom:8px;">📦</div>
+                <div style="font-weight:600;">No hay productos para mostrar</div>
+            </div>`;
+        return;
+    }
+
+    // Aplicar filtro de categoría si está activo
+    let productos = estado.productos;
+    const catId = _catalogoEstado.categoriaId;
+
+    if (catId) {
+        productos = productos.filter(p => p.idCategoria === catId);
+        console.log(`📂 Filtro categoría activo: ${productos.length} productos`);
+    }
+
+    // Renderizar
+    contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
+
+    // Refrescar stock
+    if (typeof refrescarStockCatalogo === 'function') {
+        refrescarStockCatalogo();
+    }
+
+    // Refrescar buscador
+    if (typeof refrescarBuscador === 'function') {
+        refrescarBuscador();
+    }
+
+    console.log(`✅ Catálogo restaurado: ${productos.length} productos (memoria)`);
+}
+/* ============================================================
+   🆕 Muestra mensaje de "sin resultados"
+   ============================================================ */
+function mostrarSinResultados() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    contenedor.innerHTML = `
+        <div style="grid-column:1/-1; text-align:center; padding:60px 20px; color:var(--text-muted);">
+            <div style="font-size:48px; opacity:0.5; margin-bottom:12px;">🔍</div>
+            <div style="font-weight:600; font-size:16px; margin-bottom:6px;">
+                Sin resultados
+            </div>
+            <div style="font-size:13px;">
+                No se encontraron productos que coincidan con tu búsqueda
+            </div>
+        </div>`;
+}
+/* ============================================================
+   🆕 API PÚBLICA: limpiar todos los cachés
+   Uso: window.limpiarTodo() en la consola
+   ============================================================ */
+window.limpiarTodo = async function() {
+    if (!confirm('🧹 ¿Limpiar TODOS los cachés?\n\nEsto incluye:\n- Memoria\n- IndexedDB\n- LocalStorage\n- SessionStorage\n- Cache API\n\nSe recargará la página.')) {
+        return;
+    }
+
+    console.log('🧹 Limpieza total iniciada...');
+
+    // Memoria
+    estado.productos = [];
+    estado.carritos = { venta1: [] };
+    estado.historial = [];
+    estado._productosCacheInvalidado = true;
+    estado._ultimaCargaTop = 0;
+
+    if (typeof _controlCargaTop !== 'undefined') {
+        _controlCargaTop.promesaEnCurso = null;
+        _controlCargaTop.ultimaCargaExitosa = 0;
+    }
+
+    if (typeof _busquedaCacheGlobal !== 'undefined') {
+        _busquedaCacheGlobal.clear();
+    }
+
+    // IndexedDB
+    if (typeof CatalogoDB !== 'undefined') {
+        await CatalogoDB.limpiarCache();
+    }
+
+    // LocalStorage (solo claves de caché, NO tokens)
+    const claves = [
+        'pos_top_productos_cache_v3',
+        'pos_catalogo_completo',
+        'pos_catalogo_meta',
+        'pos_estado',
+        'pos_hash_productos',
+        'pos_version_catalogo',
+        'pos_busquedas_recientes'
+    ];
+    claves.forEach(k => localStorage.removeItem(k));
+
+    // SessionStorage
+    sessionStorage.clear();
+
+    // Cache API
+    if ('caches' in window) {
+        const names = await caches.keys();
+        await Promise.all(names.map(n => caches.delete(n)));
+    }
+
+    console.log('✅ Limpieza completa');
+    if (typeof toast === 'function') toast('🧹 Cachés limpiados', 'success');
+
+    setTimeout(() => window.location.reload(), 800);
+};
+
+window.diagnosticoCaches = async function() {
+    console.log('═══════════════════════════════════════');
+    console.log('📊 DIAGNÓSTICO DE CACHÉS');
+    console.log('═══════════════════════════════════════');
+
+    // Memoria
+    console.log('\n🧠 MEMORIA:');
+    console.log('  estado.productos:', estado.productos.length);
+    console.log('  cache invalidado:', estado._productosCacheInvalidado);
+
+    // DOM
+    const cont = document.getElementById('catalogoProductos');
+    console.log('\n🌐 DOM:');
+    console.log('  .producto en DOM:', cont?.querySelectorAll('.producto').length || 0);
+
+    // IndexedDB
+    console.log('\n💾 INDEXEDDB:');
+    if (typeof CatalogoDB !== 'undefined') {
+        const info = await CatalogoDB.infoCache();
+        console.log('  existe:', info.existe);
+        console.log('  total:', info.total);
+    }
+
+    // LocalStorage
+    console.log('\n📦 LOCALSTORAGE:');
+    console.log('  tamaño total:', JSON.stringify(localStorage).length, 'bytes');
+    console.log('  top cache:', localStorage.getItem('pos_top_productos_cache_v3') ? 'existe' : 'vacío');
+    console.log('  catálogo completo:', localStorage.getItem('pos_catalogo_completo') ? 'existe' : 'vacío');
+
+    // Backend
+    console.log('\n🌐 BACKEND:');
+    try {
+        const token = localStorage.getItem('pos_token');
+        const resp = await fetch('http://127.0.0.1:5014/api/Productos/top?limite=1', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const data = await resp.json();
+        console.log('  productos en backend:', data.length);
+    } catch (e) {
+        console.log('  ❌ Error consultando backend');
+    }
+
+    console.log('\n═══════════════════════════════════════');
+};
+
+async function initConfig() {
+    await window.diagnosticoCaches();
+}
 /* ============================================================
    25. INICIALIZACIÓN
    ============================================================ */

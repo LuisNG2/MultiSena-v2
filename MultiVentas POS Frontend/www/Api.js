@@ -3,6 +3,12 @@
 // ============================================================
 
 const API_BASE_URL = (() => {
+    // 🆕 Si hay una IP configurada manualmente, usarla
+    const ipGuardada = localStorage.getItem('api_ip');
+    if (ipGuardada) {
+        return `http://${ipGuardada}/api`;
+    }
+    
     const host = window.location.hostname;
     return `http://${host}:5014/api`;
 })();
@@ -23,53 +29,83 @@ function getAuthHeaders() {
 }
 
 // ------------------------------------------------------------
-// Intentar renovar el access token usando el refresh token
+// 🆕 SISTEMA DE REFRESH CON COLA
+// Evita que peticiones concurrentes hagan logout cuando el
+// token se renueva.
 // ------------------------------------------------------------
 let _refreshing = null;
+let _refreshPromise = null;
+const _peticionesPendientes = [];
 
+/**
+ * Renueva el access token. Si ya hay un refresh en curso,
+ * devuelve la misma promesa para que todas las peticiones
+ * esperen al mismo resultado.
+ */
 async function refreshAccessToken() {
-    if (_refreshing) return _refreshing;
+    // Si ya hay un refresh en curso, esperar el mismo
+    if (_refreshPromise) {
+        return _refreshPromise;
+    }
 
-    _refreshing = (async () => {
+    _refreshPromise = (async () => {
         const refreshToken = localStorage.getItem('pos_refresh_token');
-        if (!refreshToken) return null;
+        if (!refreshToken) {
+            console.warn('⚠️ No hay refresh token disponible');
+            return null;
+        }
 
         try {
+            console.log('🔄 Renovando token...');
             const resp = await fetch(`${API_BASE_URL}/Auth/refresh`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refreshToken })
             });
 
-            if (!resp.ok) return null;
+            if (!resp.ok) {
+                console.warn(`⚠️ Refresh falló con HTTP ${resp.status}`);
+                return null;
+            }
 
             const data = await resp.json();
             const newAccess = data.accessToken || data.token;
-            if (!newAccess) return null;
+            if (!newAccess) {
+                console.warn('⚠️ Respuesta de refresh sin token');
+                return null;
+            }
 
             localStorage.setItem('pos_token', newAccess);
             if (data.refreshToken) {
                 localStorage.setItem('pos_refresh_token', data.refreshToken);
             }
 
-            console.log('🔄 Token renovado automáticamente');
+            console.log('✅ Token renovado automáticamente');
             return newAccess;
 
         } catch (e) {
-            console.warn('Error al renovar token', e);
+            console.warn('❌ Error al renovar token:', e);
             return null;
         } finally {
+            _refreshPromise = null;
             _refreshing = null;
         }
     })();
 
-    return _refreshing;
+    _refreshing = _refreshPromise;
+    return _refreshPromise;
 }
 
 // ------------------------------------------------------------
 // Cerrar sesión
 // ------------------------------------------------------------
 function handleUnauthorized() {
+    // 🆕 Evitar logout múltiple
+    if (window._logoutEnProceso) return;
+    window._logoutEnProceso = true;
+
+    console.warn('🔒 Sesión expirada. Redirigiendo a login...');
+
     localStorage.removeItem('pos_token');
     localStorage.removeItem('pos_refresh_token');
     localStorage.removeItem('pos_usuario');
@@ -78,7 +114,10 @@ function handleUnauthorized() {
         toast('Sesión expirada. Inicia sesión nuevamente.', 'error');
     }
 
-    setTimeout(() => window.location.reload(), 1200);
+    setTimeout(() => {
+        window._logoutEnProceso = false;
+        window.location.reload();
+    }, 1200);
 }
 
 // ------------------------------------------------------------
@@ -115,12 +154,12 @@ function buildResponse(ok, status, data, response) {
         ok,
         status,
         data,
-        headers: response?.headers || null   // 🆕 siempre expuesto
+        headers: response?.headers || null
     };
 }
 
 // ------------------------------------------------------------
-// FETCH PRINCIPAL con reintento automático en 401
+// 🆕 FETCH PRINCIPAL con reintento inteligente en 401
 // ------------------------------------------------------------
 async function apiFetch(endpoint, options = {}, _retry = true) {
     const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
@@ -141,13 +180,31 @@ async function apiFetch(endpoint, options = {}, _retry = true) {
 
         // ⬇️ 401 → intentar renovar el token y reintentar UNA vez
         if (response.status === 401) {
-            if (_retry) {
-                const newToken = await refreshAccessToken();
+            // 🆕 Si ya hay un refresh en curso, esperarlo
+            // y luego reintentar la petición
+            if (_refreshPromise) {
+                console.log(`⏳ [${options.method || 'GET'}] ${endpoint} esperando refresh...`);
+                const newToken = await _refreshPromise;
                 if (newToken) {
                     return apiFetch(endpoint, options, false);
                 }
             }
-            handleUnauthorized();
+
+            if (_retry) {
+                console.log(`🔄 [${options.method || 'GET'}] ${endpoint} → 401, renovando token...`);
+                const newToken = await refreshAccessToken();
+                if (newToken) {
+                    console.log(`✅ [${options.method || 'GET'}] ${endpoint} → reintentando con nuevo token`);
+                    return apiFetch(endpoint, options, false);
+                }
+                // Si no se pudo renovar, es sesión expirada
+                console.warn(`❌ [${options.method || 'GET'}] ${endpoint} → refresh falló`);
+            }
+            
+            // 🆕 Solo hacer logout si NO estamos en medio de un refresh
+            if (!_refreshPromise) {
+                handleUnauthorized();
+            }
             return buildResponse(false, 401, null, response);
         }
 

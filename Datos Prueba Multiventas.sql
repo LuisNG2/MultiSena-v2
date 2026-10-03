@@ -280,5 +280,34 @@ GO
 --GO
 
 -- Verificar
+
+USE MultiVentasPOS;
+GO
+
+-- Índice para filtrar por estado + ordenar por veces_vendido
+CREATE INDEX IX_Productos_Estado_VecesVendido 
+ON productos(estado, veces_vendido DESC)
+INCLUDE (nombre, codigo_interno, sku, id_categoria, precio_venta, stock_actual, stock_minimo);
+GO
+
+-- Índice para búsquedas por código
+CREATE INDEX IX_Productos_CodigoInterno ON productos(codigo_interno);
+GO
+
+-- Índice para búsquedas por SKU
+CREATE INDEX IX_Productos_Sku ON productos(sku) WHERE sku IS NOT NULL;
+GO
+
+-- Índice para búsquedas por nombre (prefix)
+CREATE INDEX IX_Productos_Nombre ON productos(nombre);
+GO
+
+-- Índice para filtrar por categoría
+CREATE INDEX IX_Productos_IdCategoria ON productos(id_categoria);
+GO
+
+PRINT '✓ Índices creados correctamente';
+GO
+
 SELECT id_usuario, nombre, correo, id_rol, estado FROM usuarios;
 GO

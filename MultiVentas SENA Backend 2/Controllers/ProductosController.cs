@@ -74,45 +74,98 @@ namespace MultiVentasPOS.Controllers
             return Ok(items);
         }
 
+        // En ProductosController.cs
+            [HttpGet("sync-lite")]
+            [Authorize]
+            public async Task<IActionResult> GetSyncLite()
+            {
+                var productos = await _context.Productos
+                    .AsNoTracking()
+                    .Where(p => p.Estado == "Activo")
+                    .Select(p => new
+                    {
+                        p.IdProducto,
+                        p.CodigoInterno,
+                        p.Sku,
+                        p.Nombre,
+                        p.IdCategoria,
+                        p.PrecioVenta,
+                        p.StockActual,
+                        p.StockMinimo
+                    })
+                    .ToListAsync();
+
+                return Ok(productos);
+            }
+
         // ============================================================
-        // GET: api/Productos/catalogo?page=1&pageSize=300&categoriaId=&buscar=
+        // GET: api/Productos/catalogo?page=1&pageSize=500&categoriaId=&buscar=
         // Endpoint optimizado para el catálogo del POS.
-        // - Proyección liviana (solo campos necesarios)
-        // - Paginación eficiente
-        // - Búsqueda server-side
         // ============================================================
         [HttpGet("catalogo")]
         public async Task<IActionResult> GetCatalogo(
             [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 300,
+            [FromQuery] int pageSize = 500,
             [FromQuery] int? categoriaId = null,
             [FromQuery] string? buscar = null)
         {
             page = Math.Max(1, page);
-            pageSize = Math.Clamp(pageSize, 1, 500);  // máximo 500 por request
+            pageSize = Math.Clamp(pageSize, 1, 500);
 
             var query = _context.Productos
                 .AsNoTracking()
                 .Where(p => p.Estado == "Activo");
 
-            // Filtro por categoría
             if (categoriaId.HasValue)
                 query = query.Where(p => p.IdCategoria == categoriaId.Value);
 
-            // Búsqueda server-side
             if (!string.IsNullOrWhiteSpace(buscar))
             {
                 var b = buscar.Trim();
-                query = query.Where(p =>
-                    p.Nombre.Contains(b) ||
-                    p.CodigoInterno.Contains(b) ||
-                    (p.Sku != null && p.Sku.Contains(b)));
+
+                // 🎯 Si la búsqueda es corta (<3 caracteres), NO usar Contains (muy lento)
+                // En su lugar, usar StartsWith que sí usa índices
+                if (b.Length >= 3)
+                {
+                    query = query.Where(p =>
+                        p.Nombre.StartsWith(b) ||
+                        p.CodigoInterno.StartsWith(b) ||
+                        (p.Sku != null && p.Sku.StartsWith(b)));
+                }
+                else
+                {
+                    // Búsquedas cortas: usar Equals (usa índice exacto)
+                    query = query.Where(p =>
+                        p.Nombre == b ||
+                        p.CodigoInterno == b ||
+                        p.Sku == b);
+                }
             }
 
-            var total = await query.CountAsync();
+            // ⚡ OPTIMIZACIÓN: NO contar toda la tabla si no es necesario
+            // Solo contar cuando el usuario realmente lo necesita (ej: paginación visible)
+            // En la primera página, asumimos que hay más (evita Count lento)
+            int total;
+            bool necesitaConteo = page > 1 || (!string.IsNullOrWhiteSpace(buscar) && buscar.Length >= 3);
 
+            if (necesitaConteo)
+            {
+                total = await query.CountAsync();
+            }
+            else
+            {
+                // Para la primera página sin filtros: contar con TOP para no escanear todo
+                // Si hay 500 registros, sabemos que hay al menos 500 (suficiente para la UI)
+                total = await _context.Productos
+                    .AsNoTracking()
+                    .Where(p => p.Estado == "Activo")
+                    .Take(10000)  // límite máximo de conteo
+                    .CountAsync();
+            }
+
+            // ⚡ PROYECCIÓN LIVIANA + Take ANTES de ordenar con Skip para usar índice
             var items = await query
-                .OrderByDescending(p => p.VecesVendido)   // los más vendidos primero
+                .OrderByDescending(p => p.VecesVendido)
                 .ThenBy(p => p.Nombre)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -146,7 +199,6 @@ namespace MultiVentasPOS.Controllers
                 hayMas = page * pageSize < total
             });
         }
-
         // ============================================================
         // GET: api/Productos/categorias-resumen
         // Devuelve SOLO las categorías con conteo de productos activos.

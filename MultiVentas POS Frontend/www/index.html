@@ -94,8 +94,11 @@
     <div id="estadoConexion" class="estado-conexion">🟢 Conectado</div>
     <button id="btnTema" class="btn-icon" title="Cambiar Tema" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer; margin-right:10px;">🌙</button>
     <div class="reloj" id="relojHeader">11:24</div>
-    <button id="btnClearStorage" class="btn danger limpiar-btn">
+    <!--button id="btnClearStorage" class="btn danger limpiar-btn">
       <span class="texto">Limpiar MultiVentas</span> 🧹
+    </button-->
+    <button class="btn danger" onclick="window.limpiarTodo()">
+      🧹 MultiVentas
     </button>
     <button onclick="logout()" class="btn ghost logout-btn" title="Cerrar sesión">
       🚪 <span class="texto">Salir</span>
@@ -112,7 +115,7 @@
             <span class="logo-text">MultiVentas</span>
         </div>
     </div>
-  <div class="sidebar-quick-actions"></div>   
+  <!--div class="sidebar-quick-actions"></div-->   
   <div class="sidebar-scroll">
     <nav>
       <ul>
@@ -1017,6 +1020,8 @@
 <script src="Api.js"></script>
 <script src="Buscador.js"></script>
 <script src="BuscadorUI.js"></script> 
+<script src="CatalogoDB.js"></script>
+<script src="Catalogo.js"></script>
 <script src="Escaner.js"></script> 
 <script src="App.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
