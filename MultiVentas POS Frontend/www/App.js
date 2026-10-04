@@ -892,7 +892,7 @@ function refrescarBuscador() {
 function renderCardProducto(p) {
     const precioFmt = formato(p.precioVenta);
     const sku = p.sku || p.codigoInterno;
-    const skuUpper = String(sku).trim().toUpperCase();
+    const skuUpper = String(sku || '').trim().toUpperCase();   // 🆕
     const agotado = p.stockActual <= 0;
 
     return `
@@ -901,7 +901,7 @@ function renderCardProducto(p) {
             data-nombre="${escapeHtml(p.nombre)}"
             data-precio="${p.precioVenta}"
             data-sku="${escapeHtml(sku)}"
-            data-sku-upper="${skuUpper}"              
+            data-sku-upper="${skuUpper}"
             data-stock="${p.stockActual}"
             data-stock-base="${p.stockActual}"
             data-categoria="${escapeHtml(p.categoriaNombre || '')}">
@@ -919,7 +919,6 @@ function renderCardProducto(p) {
         </div>
     `;
 }
-
 /* ============================================================
    🆕 Cachear referencias DOM (evita querySelector repetido)
    ============================================================ */
@@ -961,36 +960,6 @@ async function cargarCatalogoCompletoEnBackground() {
         // Permitir reintento si falló
         window._catalogoCompletoCargado = false;
     }
-}
-function renderCardProducto(p) {
-    const precioFmt = formato(p.precioVenta);
-    const sku = p.sku || p.codigoInterno;
-    const stockColor = p.stockActual <= p.stockMinimo ? '#dc2626' : '#16a34a';
-    const agotado = p.stockActual <= 0;
-
-    return `
-        <div class="producto"
-            data-id-producto="${p.idProducto}"
-            data-nombre="${escapeHtml(p.nombre)}"
-            data-precio="${p.precioVenta}"
-            data-sku="${escapeHtml(sku)}"
-            data-categoria="${escapeHtml(p.categoriaNombre || '')}"
-            data-stock="${p.stockActual}"
-            data-stock-base="${p.stockActual}"
-            data-veces-vendido="${p.vecesVendido || 0}">
-            <div class="prod-info">
-                <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
-                <span class="prod-sku">SKU: ${escapeHtml(sku)}</span>
-            </div>
-            <div class="prod-precio">${precioFmt}</div>
-            <div class="prod-stock" style="color:${stockColor};">
-                ${agotado ? '⛔ Agotado' : `📦 ${p.stockActual} disponibles`}
-            </div>
-            <button class="btn agregar" ${agotado ? 'disabled' : ''}>
-                ${agotado ? 'Agotado' : '+ Agregar'}
-            </button>
-        </div>
-    `;
 }
 
 function mostrarIndicadorCargaMas(contenedor) {
@@ -6321,17 +6290,16 @@ function renderAccesosRapidos() {
 }
 
 /* ============================================================
-   🆕 REFRESCAR STOCK OPTIMIZADO — Solo visibles en viewport
-   SIN usar getBoundingClientRect (evita reflow masivo)
+   🆕 REFRESCAR STOCK — Versión robusta SIN IntersectionObserver
+   Usa offsetTop/offsetHeight solo para el viewport (rápido)
    ============================================================ */
 function refrescarStockCatalogoOptimizado() {
+    const t0 = performance.now();
     const contenedor = document.getElementById('catalogoProductos');
     if (!contenedor) return;
 
-    const t0 = performance.now();
-
     // ============================================================
-    // 1. Calcular reservas por SKU (UNA SOLA PASADA sobre carritos)
+    // 1. Calcular reservas por SKU (una sola pasada)
     // ============================================================
     const reservasPorSku = new Map();
     for (const vid in estado.carritos) {
@@ -6346,19 +6314,18 @@ function refrescarStockCatalogoOptimizado() {
     }
 
     // ============================================================
-    // 2. Determinar viewport usando scrollTop/clientHeight
-    //    (NO usamos getBoundingClientRect para evitar reflow)
+    // 2. Determinar el viewport
     // ============================================================
     const scroller = document.getElementById('productos') || contenedor;
     const scrollTop = scroller.scrollTop || 0;
     const clientHeight = scroller.clientHeight || window.innerHeight;
     const buffer = 500;
 
-    const inicioViewport = scrollTop - buffer;
-    const finViewport = scrollTop + clientHeight + buffer;
+    const inicio = scrollTop - buffer;
+    const fin = scrollTop + clientHeight + buffer;
 
     // ============================================================
-    // 3. Iterar solo productos VISIBLES
+    // 3. Iterar todos los productos y procesar solo los visibles
     // ============================================================
     const productos = contenedor.querySelectorAll('.producto');
     let actualizados = 0;
@@ -6366,23 +6333,34 @@ function refrescarStockCatalogoOptimizado() {
 
     for (let i = 0; i < productos.length; i++) {
         const card = productos[i];
+
+        // ---- Skip si está fuera del viewport ----
         const top = card.offsetTop;
         const altura = card.offsetHeight || 48;
         const bottom = top + altura;
 
-        // Skip si está fuera del viewport
-        if (bottom < inicioViewport || top > finViewport) {
+        if (bottom < inicio || top > fin) {
             saltados++;
             continue;
         }
 
-        const sku = String(card.dataset.sku || '').trim().toUpperCase();
+        // ---- Obtener el SKU (con fallback) ----
+        let sku = card.dataset.skuUpper;
+        if (!sku) {
+            sku = String(card.dataset.sku || '').trim().toUpperCase();
+        }
+        if (!sku) continue;
+
+        // ---- Calcular stock disponible ----
         const stockBase = parseInt(card.dataset.stockBase || card.dataset.stock, 10) || 0;
         const reservado = reservasPorSku.get(sku) || 0;
         const disponible = Math.max(0, stockBase - reservado);
 
-        // Actualizar indicador de stock (solo si cambió)
-        const stockEl = card.querySelector('.prod-stock');
+        // ---- Obtener referencias (con fallback) ----
+        const stockEl = card._stockEl || card.querySelector('.prod-stock');
+        const btnEl = card._btnEl || card.querySelector('.agregar');
+
+        // ---- Actualizar indicador de stock ----
         if (stockEl) {
             const textoNuevo = disponible <= 0 
                 ? '⛔ Sin stock' 
@@ -6400,14 +6378,13 @@ function refrescarStockCatalogoOptimizado() {
             }
         }
 
-        // Actualizar botón (solo si cambió)
-        const btn = card.querySelector('.agregar');
-        if (btn) {
+        // ---- Actualizar botón ----
+        if (btnEl) {
             const disabled = disponible <= 0;
             const textoBoton = disabled ? 'Sin stock' : '+ Agregar';
             
-            if (btn.disabled !== disabled) btn.disabled = disabled;
-            if (btn.textContent !== textoBoton) btn.textContent = textoBoton;
+            if (btnEl.disabled !== disabled) btnEl.disabled = disabled;
+            if (btnEl.textContent !== textoBoton) btnEl.textContent = textoBoton;
         }
 
         actualizados++;
@@ -6415,6 +6392,13 @@ function refrescarStockCatalogoOptimizado() {
 
     const tiempo = (performance.now() - t0).toFixed(2);
     console.log(`🔄 Stock: ${actualizados} visibles, ${saltados} saltados (${tiempo}ms)`);
+}
+
+/* ============================================================
+   🆕 Alias por compatibilidad
+   ============================================================ */
+function refrescarStockCatalogo() {
+    refrescarStockCatalogoOptimizado();
 }
 
 /* ============================================================
