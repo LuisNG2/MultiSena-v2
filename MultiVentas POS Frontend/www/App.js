@@ -84,13 +84,14 @@ const STORAGE_KEYS = {
    ============================================================ */
     const TOP_CACHE_KEY = 'pos_top_productos_cache_v3';
     const TOP_CACHE_TTL = 60 * 60 * 1000;
-    const TOP_LIMITE = 2000;
+    const TOP_LIMITE = 500;
+    const TOP_LIMITE_CONFIG = 500;
 
     let _topProductos = [];
     let _topCargando = false;
 
     /* ============================================================
-   🆕 CONTROL DE CARGA ÚNICA DEL TOP 2000
+   🆕 CONTROL DE CARGA ÚNICA DEL TOP 500
    Evita llamadas duplicadas al endpoint /Productos/top
    ============================================================ */
     const _controlCargaTop = {
@@ -117,8 +118,8 @@ const STORAGE_KEYS = {
 
     _controlCargaTop.promesaEnCurso = (async () => {
         try {
-            console.log('📥 Cargando top 2000 (promesa única)...');
-            const resp = await api.get('/Productos/top?limite=2000');
+            console.log(`📥 Cargando top ${TOP_LIMITE_CONFIG} (promesa única)...`);
+            const resp = await api.get(`/Productos/top?limite=${TOP_LIMITE_CONFIG}`);
 
             if (!resp.ok) {
                 console.warn('⚠️ Error cargando top');
@@ -491,7 +492,7 @@ function cargarVista(idVista) {
     if (idVista === 'ventas') {
         setTimeout(() => {
             if (typeof refrescarStockCatalogo === 'function') {
-                refrescarStockCatalogo();
+                refrescarStockCatalogoOptimizado();
             }
         }, 150);
     }
@@ -752,6 +753,8 @@ function mostrarResultadosBusqueda(resultados) {
     });
 
     contenedor.innerHTML = unicos.map(r => renderCardProducto(r._ref || r)).join('');
+    cachearReferenciasProductos();   // 🆕
+    inicializarObserverCatalogo();   // 🆕
 
     // Actualizar el dropdown de sugerencias (si existe)
     const panel = window._sugerenciasPanelCatalogo;
@@ -791,7 +794,7 @@ function mostrarResultadosBusqueda(resultados) {
     }
 
     if (typeof refrescarStockCatalogo === 'function') {
-        setTimeout(() => refrescarStockCatalogo(), 0);
+        setTimeout(() => refrescarStockCatalogoOptimizado(), 0);
     }
 }
 async function cargarProductosDesdeAPI(forzar = false) {
@@ -827,13 +830,15 @@ async function cargarProductosDesdeAPI(forzar = false) {
         }
 
         contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
+        cachearReferenciasProductos();   // 🆕
+        inicializarObserverCatalogo();   // 🆕
 
         if (estado.terminoBusqueda) {
             filtrarCatalogo(estado.terminoBusqueda);
         }
 
         if (typeof refrescarStockCatalogo === 'function') {
-            refrescarStockCatalogo();
+            refrescarStockCatalogoOptimizado();
         }
 
         refrescarBuscador();
@@ -845,7 +850,9 @@ async function cargarProductosDesdeAPI(forzar = false) {
 
     } finally {
         estado._cargandoProductos = false;
-    }
+    }   
+    
+
 }
 function refrescarBuscador() {
     if (typeof BuscadorUI === 'undefined') return;
@@ -882,14 +889,10 @@ function refrescarBuscador() {
     input._buscadorAPI = null;
     setTimeout(() => BuscadorUI.init(), 50);
 }
-/**
- * Extrae el HTML de un producto a una función separada.
- * Útil porque se usa en varios lugares.
- */
 function renderCardProducto(p) {
     const precioFmt = formato(p.precioVenta);
     const sku = p.sku || p.codigoInterno;
-    const stockColor = p.stockActual <= p.stockMinimo ? '#dc2626' : '#16a34a';
+    const skuUpper = String(sku).trim().toUpperCase();
     const agotado = p.stockActual <= 0;
 
     return `
@@ -898,15 +901,16 @@ function renderCardProducto(p) {
             data-nombre="${escapeHtml(p.nombre)}"
             data-precio="${p.precioVenta}"
             data-sku="${escapeHtml(sku)}"
+            data-sku-upper="${skuUpper}"              
             data-stock="${p.stockActual}"
             data-stock-base="${p.stockActual}"
             data-categoria="${escapeHtml(p.categoriaNombre || '')}">
             <div class="prod-info">
                 <span class="prod-nombre" title="${escapeHtml(p.nombre)}">${escapeHtml(p.nombre)}</span>
-                <span class="prod-sku">${escapeHtml(sku)}</span>
+                <span class="prod-sku">SKU: ${escapeHtml(sku)}</span>
             </div>
             <div class="prod-precio">${precioFmt}</div>
-            <div class="prod-stock" style="color:${stockColor};">
+            <div class="prod-stock" style="color:${agotado ? '#dc2626' : '#16a34a'};">
                 ${agotado ? '⛔ Agotado' : `📦 ${p.stockActual} disponibles`}
             </div>
             <button class="btn agregar" ${agotado ? 'disabled' : ''}>
@@ -916,13 +920,18 @@ function renderCardProducto(p) {
     `;
 }
 
-/**
- * 🆕 Carga el catálogo completo (todos los productos) en background.
- * NO bloquea la UI. Se guarda en localStorage.
- */
 /* ============================================================
-   🆕 Catálogo completo en background — UNA SOLA VEZ por sesión
+   🆕 Cachear referencias DOM (evita querySelector repetido)
    ============================================================ */
+function cachearReferenciasProductos() {
+    const productos = document.querySelectorAll('#catalogoProductos .producto');
+    productos.forEach(card => {
+        if (card._stockEl && card._btnEl) return;   // Ya cacheados
+        card._stockEl = card.querySelector('.prod-stock');
+        card._btnEl = card.querySelector('.agregar');
+    });
+    console.log(`📌 Referencias cacheadas para ${productos.length} productos`);
+}
 async function cargarCatalogoCompletoEnBackground() {
     // 🆕 Solo ejecutar una vez por sesión
     if (window._catalogoCompletoCargado) {
@@ -1081,7 +1090,7 @@ async function aplicarFiltroCategoria(categoriaId) {
         filtrarCatalogo(estado.terminoBusqueda);
     }
 
-    if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+    if (typeof refrescarStockCatalogoOptimizado === 'function') refrescarStockCatalogoOptimizado();
     if (typeof refrescarBuscador === 'function') refrescarBuscador();
 
     console.log(`📂 Filtro aplicado: ${filtrados.length} productos (categoría ${categoriaId || 'todas'})`);
@@ -1207,7 +1216,7 @@ async function cargarTodosLosProductos() {
 
         // Refrescar stock dinámico
         if (typeof refrescarStockCatalogo === 'function') {
-            refrescarStockCatalogo();
+            refrescarStockCatalogoOptimizado();
         }
 
         console.log(`✅ ${todos.length} productos cargados (todos)`);
@@ -1329,7 +1338,7 @@ async function initVentas() {
         // Ya hay productos en memoria → solo renderizar
         console.log(`⚡ Renderizando ${estado.productos.length} productos desde memoria`);
         contenedor.innerHTML = estado.productos.map(p => renderCardProducto(p)).join('');
-        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
     } else {
         console.log(`⏭ Productos ya renderizados (${estado.productos.length} en memoria)`);
     }
@@ -1348,7 +1357,7 @@ async function initVentas() {
     }
 
     setTimeout(() => {
-        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogo();
+        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
     }, 500);
 
     if (estado._ventasInited) {
@@ -1445,7 +1454,7 @@ function cerrarTabConConfirmacion(tabEl) {
             estado.carritos[id] = [];
             renderCarrito(id);
             guardarEstado();
-            refrescarStockCatalogo();
+            refrescarStockCatalogoOptimizado();
             toast('Venta 1 limpiada');
         }
         return;
@@ -1964,7 +1973,7 @@ function cerrarPestaña(id) {
     }
     guardarEstado();
     actualizarConteos();
-    refrescarStockCatalogo();
+    refrescarStockCatalogoOptimizado();
 }
 
 function numeroDesdeId(idVenta) {
@@ -2069,7 +2078,7 @@ function agregarProducto(idVenta, { idProducto, nombre, precio, sku, stock }) {
     actualizarConteos();
 
     if (typeof refrescarStockCatalogo === 'function') {
-        refrescarStockCatalogo();
+        refrescarStockCatalogoOptimizado();
     }
 }
 /* ==================== STOCK DINÁMICO ==================== */
@@ -2236,7 +2245,7 @@ function actualizarCantidad(idVenta, sku, tipo) {
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
-    refrescarStockCatalogo();
+    refrescarStockCatalogoOptimizado();
 }
 
 function eliminarProducto(idVenta, sku) {
@@ -2259,7 +2268,7 @@ function eliminarProducto(idVenta, sku) {
     renderCarrito(idVenta);
     guardarEstado();
     actualizarConteos();
-    refrescarStockCatalogo();
+    refrescarStockCatalogoOptimizado();
 
     toast(`🗑 "${item.nombre}" eliminado del carrito`, 'success');
 }
@@ -2646,7 +2655,7 @@ async function confirmarVenta(e) {
     estado.carritos[ventaId] = [];
     renderCarrito(ventaId);
     actualizarConteos();
-    refrescarStockCatalogo();
+    refrescarStockCatalogoOptimizado();
 
     estado.historial.push({
         idVenta: venta.idVenta,
@@ -2863,9 +2872,19 @@ function renderGrupoDia(anio, mes, d) {
 function renderVentaIndividual(v) {
     const esAnulada = v.estado === 'Anulada';
     
-    // Solución: Si la fecha no termina en Z, se la agregamos para indicarle a JS que es UTC
-    const fechaString = v.fechaVenta.endsWith('Z') ? v.fechaVenta : `${v.fechaVenta}Z`;
+    // 🆕 El backend ahora envía la fecha en hora Colombia,
+    // pero igual nos aseguramos de formatearla bien
+    let fechaString = v.fechaVenta;
     
+    // Si viene sin zona horaria, agregar 'Z' (UTC) para que se convierta bien
+    if (!fechaString.endsWith('Z') && !fechaString.match(/[+-]\d{2}:\d{2}$/)) {
+        // Asumimos que ya es hora Colombia (sin zona)
+        // Parsear como local
+        fechaString = fechaString;
+    } else {
+        fechaString = fechaString.endsWith('Z') ? fechaString : `${fechaString}Z`;
+    }
+
     const hora = new Date(fechaString).toLocaleTimeString('es-CO', {
         timeZone: 'America/Bogota',
         hour: '2-digit',
@@ -2893,7 +2912,6 @@ function renderVentaIndividual(v) {
         </div>
     `;
 }
-
 
 async function verDetalleVenta(idVenta) {
     const modal = document.getElementById('modalDetalleVenta');
@@ -6303,6 +6321,103 @@ function renderAccesosRapidos() {
 }
 
 /* ============================================================
+   🆕 REFRESCAR STOCK OPTIMIZADO — Solo visibles en viewport
+   SIN usar getBoundingClientRect (evita reflow masivo)
+   ============================================================ */
+function refrescarStockCatalogoOptimizado() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const t0 = performance.now();
+
+    // ============================================================
+    // 1. Calcular reservas por SKU (UNA SOLA PASADA sobre carritos)
+    // ============================================================
+    const reservasPorSku = new Map();
+    for (const vid in estado.carritos) {
+        const carrito = estado.carritos[vid] || [];
+        for (let i = 0; i < carrito.length; i++) {
+            const item = carrito[i];
+            const sku = String(item.sku || '').trim().toUpperCase();
+            if (!sku) continue;
+            const cant = parseInt(item.cantidad, 10) || 0;
+            reservasPorSku.set(sku, (reservasPorSku.get(sku) || 0) + cant);
+        }
+    }
+
+    // ============================================================
+    // 2. Determinar viewport usando scrollTop/clientHeight
+    //    (NO usamos getBoundingClientRect para evitar reflow)
+    // ============================================================
+    const scroller = document.getElementById('productos') || contenedor;
+    const scrollTop = scroller.scrollTop || 0;
+    const clientHeight = scroller.clientHeight || window.innerHeight;
+    const buffer = 500;
+
+    const inicioViewport = scrollTop - buffer;
+    const finViewport = scrollTop + clientHeight + buffer;
+
+    // ============================================================
+    // 3. Iterar solo productos VISIBLES
+    // ============================================================
+    const productos = contenedor.querySelectorAll('.producto');
+    let actualizados = 0;
+    let saltados = 0;
+
+    for (let i = 0; i < productos.length; i++) {
+        const card = productos[i];
+        const top = card.offsetTop;
+        const altura = card.offsetHeight || 48;
+        const bottom = top + altura;
+
+        // Skip si está fuera del viewport
+        if (bottom < inicioViewport || top > finViewport) {
+            saltados++;
+            continue;
+        }
+
+        const sku = String(card.dataset.sku || '').trim().toUpperCase();
+        const stockBase = parseInt(card.dataset.stockBase || card.dataset.stock, 10) || 0;
+        const reservado = reservasPorSku.get(sku) || 0;
+        const disponible = Math.max(0, stockBase - reservado);
+
+        // Actualizar indicador de stock (solo si cambió)
+        const stockEl = card.querySelector('.prod-stock');
+        if (stockEl) {
+            const textoNuevo = disponible <= 0 
+                ? '⛔ Sin stock' 
+                : `📦 ${disponible} disponibles`;
+            
+            if (stockEl.textContent !== textoNuevo) {
+                stockEl.textContent = textoNuevo;
+                if (disponible <= 10) {
+                    stockEl.style.color = '#dc2626';
+                    stockEl.style.background = 'rgba(220, 38, 38, 0.10)';
+                } else {
+                    stockEl.style.color = '#16a34a';
+                    stockEl.style.background = 'rgba(22, 163, 74, 0.10)';
+                }
+            }
+        }
+
+        // Actualizar botón (solo si cambió)
+        const btn = card.querySelector('.agregar');
+        if (btn) {
+            const disabled = disponible <= 0;
+            const textoBoton = disabled ? 'Sin stock' : '+ Agregar';
+            
+            if (btn.disabled !== disabled) btn.disabled = disabled;
+            if (btn.textContent !== textoBoton) btn.textContent = textoBoton;
+        }
+
+        actualizados++;
+    }
+
+    const tiempo = (performance.now() - t0).toFixed(2);
+    console.log(`🔄 Stock: ${actualizados} visibles, ${saltados} saltados (${tiempo}ms)`);
+}
+
+/* ============================================================
    AUTO-REFRESCO DE STOCK (v2 — con instrumentación de arrays)
    ============================================================ */
 (function setupAutoRefrescoStock() {
@@ -6317,7 +6432,7 @@ function renderAccesosRapidos() {
         if (timeoutRefresco) clearTimeout(timeoutRefresco);
         timeoutRefresco = setTimeout(() => {
             if (typeof refrescarStockCatalogo === 'function') {
-                refrescarStockCatalogo();
+                refrescarStockCatalogoOptimizado();
             }
         }, 30);
     }
@@ -6465,7 +6580,7 @@ window._verificarConsistenciaStock = () => {
         console.warn(`⚠️ ${problemas.length} tarjetas desactualizadas:`);
         console.table(problemas);
         console.log('💡 Ejecutando refrescarStockCatalogo()...');
-        refrescarStockCatalogo();
+        refrescarStockCatalogoOptimizado();
     }
 };
 async function cargarCatalogoCompletoEnBackground() {
@@ -6611,16 +6726,20 @@ function rerenderizarCatalogoDesdeMemoria() {
 
     // Renderizar
     contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
+    cachearReferenciasProductos();   // 🆕
+    inicializarObserverCatalogo();   // 🆕
 
     // Refrescar stock
     if (typeof refrescarStockCatalogo === 'function') {
-        refrescarStockCatalogo();
+        refrescarStockCatalogoOptimizado();
     }
 
     // Refrescar buscador
     if (typeof refrescarBuscador === 'function') {
         refrescarBuscador();
     }
+
+
 
     console.log(`✅ Catálogo restaurado: ${productos.length} productos (memoria)`);
 }
@@ -6748,6 +6867,117 @@ window.diagnosticoCaches = async function() {
 
 async function initConfig() {
     await window.diagnosticoCaches();
+}
+
+/* ============================================================
+   🆕 REFRESCAR STOCK v3 — Solo visibles, SIN iterar el DOM
+   ============================================================ */
+
+let _observerCatalogo = null;
+let _productosVisiblesCatalogo = new Set();
+
+function inicializarObserverCatalogo() {
+    if (_observerCatalogo) _observerCatalogo.disconnect();
+    _productosVisiblesCatalogo.clear();
+
+    const root = document.getElementById('productos') || null;
+
+    _observerCatalogo = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                _productosVisiblesCatalogo.add(entry.target);
+            } else {
+                _productosVisiblesCatalogo.delete(entry.target);
+            }
+        });
+    }, {
+        root: root,
+        rootMargin: '300px 0px',
+        threshold: 0
+    });
+
+    document.querySelectorAll('#catalogoProductos .producto').forEach(p => {
+        _observerCatalogo.observe(p);
+    });
+}
+
+/**
+ * 🆕 Refrescar stock OPTIMIZADO al máximo
+ * - Solo itera sobre los VISIBLES (Set, no DOM)
+ * - Usa data-* ya cacheados
+ * - NO lee offsetTop/offsetHeight
+ */
+function refrescarStockCatalogoOptimizado() {
+    const t0 = performance.now();
+
+    // ============================================================
+    // 1. Calcular reservas por SKU (UNA SOLA PASADA)
+    // ============================================================
+    const reservasPorSku = new Map();
+    for (const vid in estado.carritos) {
+        const carrito = estado.carritos[vid] || [];
+        for (let i = 0; i < carrito.length; i++) {
+            const item = carrito[i];
+            const sku = String(item.sku || '').trim().toUpperCase();
+            if (!sku) continue;
+            const cant = parseInt(item.cantidad, 10) || 0;
+            reservasPorSku.set(sku, (reservasPorSku.get(sku) || 0) + cant);
+        }
+    }
+
+    // ============================================================
+    // 2. Iterar SOLO sobre los visibles (Set ya cacheado)
+    //    SIN tocar el DOM para buscar elementos
+    // ============================================================
+    let actualizados = 0;
+    const visibles = _productosVisiblesCatalogo;
+
+    visibles.forEach(card => {
+        if (!card.isConnected) return;
+
+        const sku = card.dataset.skuUpper;   // 🆕 Ya cacheado en mayúsculas
+        if (!sku) return;
+
+        const stockBase = parseInt(card.dataset.stockBase, 10) || 0;
+        const reservado = reservasPorSku.get(sku) || 0;
+        const disponible = Math.max(0, stockBase - reservado);
+
+        // 🆕 Usar referencias cacheadas (no querySelector)
+        const stockEl = card._stockEl;
+        const btnEl = card._btnEl;
+
+        if (stockEl) {
+            const textoNuevo = disponible <= 0 
+                ? '⛔ Sin stock' 
+                : `📦 ${disponible} disponibles`;
+            
+            if (stockEl.textContent !== textoNuevo) {
+                stockEl.textContent = textoNuevo;
+                if (disponible <= 10) {
+                    stockEl.style.color = '#dc2626';
+                    stockEl.style.background = 'rgba(220, 38, 38, 0.10)';
+                } else {
+                    stockEl.style.color = '#16a34a';
+                    stockEl.style.background = 'rgba(22, 163, 74, 0.10)';
+                }
+            }
+        }
+
+        if (btnEl) {
+            const disabled = disponible <= 0;
+            const textoBoton = disabled ? 'Sin stock' : '+ Agregar';
+            
+            if (btnEl.disabled !== disabled) btnEl.disabled = disabled;
+            if (btnEl.textContent !== textoBoton) btnEl.textContent = textoBoton;
+        }
+
+        actualizados++;
+    });
+
+    const tiempo = (performance.now() - t0).toFixed(2);
+    if (tiempo > 50) {
+        console.log(`🔄 Stock: ${actualizados} visibles (${tiempo}ms) ⚠️`);
+    }
 }
 /* ============================================================
    25. INICIALIZACIÓN
