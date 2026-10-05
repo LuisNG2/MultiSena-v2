@@ -487,3 +487,9 @@ BEGIN
     PRINT '✓ Default de refresh_tokens.fecha_creacion migrado a GETUTCDATE()';
 END
 GO
+
+
+CREATE INDEX IX_Productos_Catalogo 
+ON Productos (Estado, Veces_Vendido DESC, Nombre ASC) 
+INCLUDE (Id_Categoria, Codigo_Interno, Sku, Precio_Venta, Stock_Actual);
+Go

@@ -277,28 +277,28 @@
       <!-- Panel izquierdo: catálogo -->
       <section class="catalogo split-panel" id="productos" aria-label="Catálogo de productos">
           <div class="vista-controles">
-              <div class="search">
-                  <input id="buscador" 
+            <div class="search" style="position: relative;">
+                <input id="buscador" 
                         type="text" 
                         placeholder="Buscar producto, SKU o categoría..."
-                        data-buscador
-                        data-tabla="catalogoProductos"
-                        data-on-scan="onScanCatalogo"
                         autocomplete="off"
                         spellcheck="false" />
-                  <button id="btnClearSearch" class="clear-btn" aria-label="Limpiar búsqueda">✖</button>
-              </div>
+                <button id="btnClearSearch" class="clear-btn" aria-label="Limpiar búsqueda">✖</button>
+                
+                <!-- 🆕 PANEL DE SUGERENCIAS -->
+                <div id="sugerenciasPanelCatalogo" 
+                    class="buscador-sugerencias" 
+                    style="display:none;"></div>
+            </div>
 
-              <select id="filtroCategoria" class="filtro-categoria" aria-label="Filtrar por categoría">
-                  <option value="">📂 Todas las categorías</option>
-              </select>
+            <!--select id="filtroCategoria" class="filtro-categoria" aria-label="Filtrar por categoría">
+                <option value="">📂 Todas</option>
+            </select-->
 
-              <button id="btnCargarTodos" class="btn ghost small" title="Cargar todos los productos">
-                  📦 Cargar todos
-              </button>
-
-              <button id="btnToggle" class="btn small" aria-label="Cambiar vista">📋 Cambiar vista</button>
-          </div>
+            <button id="btnToggle" class="btn-toggle-vista" title="Cambiar vista (lista/grid)" aria-label="Cambiar vista">
+                <span id="btnToggleIcon">⊞</span>
+            </button>
+        </div>
 
           <div id="catalogoInfo" style="font-size:11px; color:var(--text-muted); padding:0 10px 6px; text-align:right;"></div>
 

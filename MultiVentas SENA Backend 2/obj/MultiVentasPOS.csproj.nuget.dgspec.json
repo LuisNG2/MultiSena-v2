@@ -1,23 +1,23 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {}
+    "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {}
   },
   "projects": {
-    "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {
+    "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+        "projectUniqueName": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
         "projectName": "MultiVentasPOS",
-        "projectPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
-        "packagesPath": "C:\\Users\\LuisNg\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\LuisNg\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\obj\\",
+        "projectPath": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\MultiVentasPOS.csproj",
+        "packagesPath": "C:\\Users\\Servidor\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\Servidor\\Dropbox\\MultiSena v2\\MultiVentas SENA Backend 2\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
-          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+          "D:\\Visual S Shared\\NuGetPackages"
         ],
         "configFilePaths": [
-          "C:\\Users\\LuisNg\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\Servidor\\AppData\\Roaming\\NuGet\\NuGet.Config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
@@ -26,11 +26,11 @@
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net8.0": {
-            "framework": "net8.0",
             "targetAlias": "net8.0",
             "projectReferences": {}
           }
@@ -50,11 +50,10 @@
           "auditLevel": "low",
           "auditMode": "direct"
         },
-        "SdkAnalysisLevel": "10.0.400"
+        "SdkAnalysisLevel": "9.0.200"
       },
       "frameworks": {
         "net8.0": {
-          "framework": "net8.0",
           "targetAlias": "net8.0",
           "dependencies": {
             "ClosedXML": {
@@ -107,7 +106,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.201/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

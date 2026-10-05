@@ -727,79 +727,165 @@ function cachearYMostrar(cacheKey, resultados) {
     _busquedaCacheGlobal.set(cacheKey, resultados);
     mostrarResultadosBusqueda(resultados);
 }
-
 /* ============================================================
-   RENDER DE RESULTADOS EN EL CATÁLOGO
+   🆕 MOSTRAR RESULTADOS DE BÚSQUEDA (v3)
+   - Renderiza resultados en el catálogo
+   - Actualiza panel de sugerencias (top 5)
+   - Guarda en buscador._ultimosEncontrados para Ctrl+1-5
+   - Reinicializa referencias y stock
    ============================================================ */
-// En App.js, modifica mostrarResultadosBusqueda para que no dependa de variables globales:
 function mostrarResultadosBusqueda(resultados) {
     const contenedor = document.getElementById('catalogoProductos');
+    const panel = document.getElementById('sugerenciasPanelCatalogo');
+    const buscador = document.getElementById('buscador');
+
     if (!contenedor) return;
 
-    if (resultados.length === 0) {
+    // ============================================================
+    // CASO 1: SIN RESULTADOS
+    // ============================================================
+    if (!resultados || resultados.length === 0) {
         contenedor.innerHTML = `
             <div style="grid-column:1/-1; text-align:center; padding:40px 20px; color:var(--text-muted);">
                 <div style="font-size:36px; opacity:0.5; margin-bottom:8px;">🔍</div>
                 <div style="font-weight:600;">Sin resultados</div>
+                <div style="font-size:12px; margin-top:6px;">Prueba con otro término</div>
             </div>`;
+
+        // Limpiar panel de sugerencias
+        if (panel) {
+            panel.innerHTML = '';
+            panel.style.display = 'none';
+        }
+        if (buscador) buscador._ultimosEncontrados = [];
         return;
     }
 
+    // ============================================================
+    // CASO 2: DEDUPLICAR RESULTADOS
+    // ============================================================
     const vistos = new Set();
     const unicos = resultados.filter(r => {
-        if (vistos.has(r.idProducto)) return false;
-        vistos.add(r.idProducto);
+        const id = r.idProducto || (r._ref && r._ref.idProducto);
+        if (!id || vistos.has(id)) return false;
+        vistos.add(id);
         return true;
     });
 
+    // ============================================================
+    // CASO 3: RENDERIZAR EN EL CATÁLOGO
+    // ============================================================
     contenedor.innerHTML = unicos.map(r => renderCardProducto(r._ref || r)).join('');
-    cachearReferenciasProductos();   // 🆕
-    inicializarObserverCatalogo();   // 🆕
 
-    // Actualizar el dropdown de sugerencias (si existe)
-    const panel = window._sugerenciasPanelCatalogo;
-    const input = window._inputBuscadorCatalogo;
-    if (panel && input && input.value.trim().length >= 2) {
+    // 🆕 CRÍTICO: Reinicializar referencias y observer
+    if (typeof inicializarObserverCatalogo === 'function') {
+        inicializarObserverCatalogo();
+    }
+
+    // 🆕 Refrescar stock visible (por si hay carrito)
+    if (typeof refrescarStockCatalogoOptimizado === 'function') {
+        setTimeout(() => refrescarStockCatalogoOptimizado(), 50);
+    }
+
+    // ============================================================
+    // 🆕 CASO 4: ACTUALIZAR PANEL DE SUGERENCIAS
+    // ============================================================
+    if (panel && buscador && buscador.value.trim().length >= 2) {
         const top5 = unicos.slice(0, 5);
+
+        // 🆕 Guardar en el buscador para Ctrl+1-5
+        // 🆕 Enriquecer top5 con datos completos (soporta IndexedDB)
+            const top5ConDatos = top5.map(item => {
+                const ref = item._ref || item;
+                return {
+                    ...item,
+                    _ref: ref,
+                    idProducto: ref.idProducto || item.idProducto,
+                    nombre: ref.nombre || item.nombre,
+                    sku: ref.sku || ref.codigoInterno || item.sku,
+                    precioVenta: ref.precioVenta || item.precioVenta || 0,
+                    stockActual: ref.stockActual != null ? ref.stockActual : item.stockActual
+                };
+            });
+
+            buscador._ultimosEncontrados = top5ConDatos;
+
+        // Renderizar cada sugerencia
         panel.innerHTML = top5.map((item, i) => {
-            const nombreHtml = typeof Buscador.resaltar === 'function'
-                ? Buscador.resaltar(item.nombre || '', item._coincidencias || [])
-                : escapeHtml(item.nombre || '');
+            const ref = item._ref || item;
+            const nombre = ref.nombre || item.nombre || '';
+            const sku = ref.sku || ref.codigoInterno || item.sku || '';
+            const precio = ref.precioVenta || item.precioVenta || 0;
+
+            // Resaltar coincidencias
+            const nombreHtml = typeof Buscador !== 'undefined' && 
+                typeof Buscador.resaltar === 'function'
+                ? Buscador.resaltar(nombre, item._coincidencias || [])
+                : escapeHtml(nombre);
+
             return `
-                <div class="sugerencia-item" data-index="${i}">
+                <div class="sugerencia-item" 
+                     data-index="${i}" 
+                     data-id-producto="${ref.idProducto}"
+                     title="Ctrl+${i + 1} para agregar">
                     <span class="sugerencia-indice">${i + 1}</span>
                     <span class="sugerencia-nombre">${nombreHtml}</span>
-                    <span class="sugerencia-sku">${escapeHtml(item.sku || '')}</span>
+                    <span class="sugerencia-sku">${escapeHtml(sku)}</span>
+                    <span class="sugerencia-precio">${formato(precio)}</span>
                 </div>
             `;
         }).join('');
-        panel.style.display = top5.length > 0 ? 'block' : 'none';
 
+        panel.style.display = 'block';
+
+        // Click en sugerencia → agregar al carrito
         panel.querySelectorAll('.sugerencia-item').forEach((el, i) => {
             el.onclick = (e) => {
+                e.preventDefault();
                 e.stopPropagation();
+
                 const item = top5[i];
-                if (item && item._ref) {
-                    const card = document.querySelector(`.producto[data-id-producto="${item._ref.idProducto}"]`);
-                    if (card) {
-                        const btn = card.querySelector('.agregar');
-                        if (btn && !btn.disabled) btn.click();
-                    }
+                if (item && buscador._agregarItemAlCarrito) {
+                    buscador._agregarItemAlCarrito(item, buscador.value);
                 }
-                panel.style.display = 'none';
+            };
+
+            // Hover → marcar como activo
+            el.onmouseenter = () => {
+                panel.querySelectorAll('.sugerencia-item.active')
+                    .forEach(x => x.classList.remove('active'));
+                el.classList.add('active');
             };
         });
-    } else if (panel) {
-        panel.style.display = 'none';
+
+        console.log(`✅ ${unicos.length} resultados renderizados, panel con ${top5.length} sugerencias`);
+    } else {
+        // Ocultar panel si no aplica
+        if (panel) {
+            panel.innerHTML = '';
+            panel.style.display = 'none';
+        }
+        if (buscador) buscador._ultimosEncontrados = [];
+
+        console.log(`✅ ${unicos.length} resultados renderizados (sin sugerencias)`);
     }
 
-    if (typeof refrescarStockCatalogo === 'function') {
-        setTimeout(() => refrescarStockCatalogoOptimizado(), 0);
+    // ============================================================
+    // 🆕 Refrescar buscador (para mantener consistencia)
+    // ============================================================
+    if (typeof refrescarBuscador === 'function') {
+        refrescarBuscador();
     }
 }
+/* ============================================================
+   🆕 CARGAR PRODUCTOS — Versión robusta
+   - Separa obtención de datos del renderizado
+   - Solo re-renderiza si es necesario
+   - Siempre reinicializa el observer cuando renderiza
+   ============================================================ */
 async function cargarProductosDesdeAPI(forzar = false) {
     if (estado._cargandoProductos) {
-        console.log('⏳ Carga de productos ya en curso');
+        console.log('⏳ Carga en curso');
         return;
     }
 
@@ -812,47 +898,71 @@ async function cargarProductosDesdeAPI(forzar = false) {
     estado._cargandoProductos = true;
 
     try {
+        // ============================================================
+        // PASO 1: Obtener productos (puede usar caché)
+        // ============================================================
         const productos = await cargarTopUnaVez(forzar);
 
-        // 🆕 Si no hay productos, mostrar mensaje y salir
         if (!productos || productos.length === 0) {
-            contenedor.innerHTML = `
-                <div style="grid-column:1/-1; text-align:center; padding:60px 20px; color:var(--text-muted);">
-                    <div style="font-size:48px; opacity:0.5; margin-bottom:12px;">📦</div>
-                    <div style="font-weight:600; font-size:16px; margin-bottom:6px;">
-                        No hay productos en el catálogo
-                    </div>
-                    <div style="font-size:13px;">
-                        Importa productos para comenzar a vender
-                    </div>
-                </div>`;
+            console.log('⚠️ Sin productos, mostrando mensaje');
+            contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos activos.</p>`;
             return;
         }
 
-        contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
-        cachearReferenciasProductos();   // 🆕
-        inicializarObserverCatalogo();   // 🆕
+        // ============================================================
+        // PASO 2: Verificar si YA está renderizado correctamente
+        // ============================================================
+        const productosEnDom = contenedor.querySelectorAll('.producto').length;
+        const primerProducto = contenedor.querySelector('.producto');
+        const refsPerdidas = !primerProducto || !primerProducto._stockEl;
 
+        // 🆕 Si YA hay productos y las referencias están intactas → NO re-renderizar
+        if (!forzar && productosEnDom === productos.length && !refsPerdidas && 
+            !estado._productosCacheInvalidado && !estado.terminoBusqueda) {
+            console.log(`✅ Catálogo ya renderizado (${productosEnDom} productos), omitiendo re-render`);
+            
+            // Solo refrescar stock
+            if (typeof refrescarStockCatalogoOptimizado === 'function') {
+                refrescarStockCatalogoOptimizado();
+            }
+            return;
+        }
+
+        // ============================================================
+        // PASO 3: Renderizar (solo cuando es necesario)
+        // ============================================================
+        console.log(`🎨 Renderizando ${productos.length} productos...`);
+        contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
+
+        // ============================================================
+        // PASO 4: Reinicializar observer y referencias (CRÍTICO)
+        // ============================================================
+        if (typeof inicializarObserverCatalogo === 'function') {
+            inicializarObserverCatalogo();
+        }
+
+        // Aplicar filtro de búsqueda activo
         if (estado.terminoBusqueda) {
             filtrarCatalogo(estado.terminoBusqueda);
         }
 
-        if (typeof refrescarStockCatalogo === 'function') {
-            refrescarStockCatalogoOptimizado();
+        // Refrescar stock
+        if (typeof refrescarStockCatalogoOptimizado === 'function') {
+            setTimeout(() => refrescarStockCatalogoOptimizado(), 50);
         }
 
-        refrescarBuscador();
-
-        if (!window._catalogoCompletoSolicitado && productos.length > 0) {
-            window._catalogoCompletoSolicitado = true;
-            cargarCatalogoCompletoEnBackground();
+        // Refrescar buscador
+        if (typeof refrescarBuscador === 'function') {
+            refrescarBuscador();
         }
 
+        console.log(`✅ Catálogo renderizado: ${productos.length} productos`);
+
+    } catch (e) {
+        console.error('❌ Error en cargarProductosDesdeAPI:', e);
     } finally {
         estado._cargandoProductos = false;
-    }   
-    
-
+    }
 }
 function refrescarBuscador() {
     if (typeof BuscadorUI === 'undefined') return;
@@ -1248,25 +1358,42 @@ async function poblarFiltroCategorias() {
     }
 }
 /* ============================================================
-   7. BUSCADOR DEL CATÁLOGO DE VENTAS
+   🆕 FILTRAR CATÁLOGO
+   - Si el texto está vacío → restaura TODOS los productos
+   - Si hay texto → filtra por coincidencia
+   - Mantiene las cards con style.display = '' cuando coinciden
    ============================================================ */
-
 function filtrarCatalogo(texto) {
     const contenedor = document.getElementById('catalogoProductos');
     if (!contenedor) return;
 
     const q = (texto || '').trim();
 
+    // ============================================================
+    // CASO 1: Texto vacío → RESTAURAR TODOS
+    // ============================================================
     if (!q) {
-        contenedor.querySelectorAll('.producto').forEach(card => {
-            card.style.display = '';
+        const cards = contenedor.querySelectorAll('.producto');
+        let restaurados = 0;
+        cards.forEach(card => {
+            if (card.style.display === 'none') {
+                card.style.display = '';
+                restaurados++;
+            }
         });
+        if (restaurados > 0) {
+            console.log(`🔄 Restaurados ${restaurados} productos ocultos`);
+        }
         return;
     }
 
+    // ============================================================
+    // CASO 2: Filtrar por texto
+    // ============================================================
     const cards = Array.from(contenedor.querySelectorAll('.producto'));
     if (cards.length === 0) return;
 
+    // Construir items para el motor
     const items = cards.map(card => ({
         nombre: card.dataset.nombre || '',
         sku: card.dataset.sku || '',
@@ -1277,78 +1404,106 @@ function filtrarCatalogo(texto) {
     const encontrados = Buscador.buscar(q, items, { minScore: 25 });
     const encontradosSet = new Set(encontrados.map(e => e._card));
 
+    let visibles = 0;
+    let ocultos = 0;
+
     cards.forEach(card => {
-        card.style.display = encontradosSet.has(card) ? '' : 'none';
+        if (encontradosSet.has(card)) {
+            card.style.display = '';
+            visibles++;
+        } else {
+            card.style.display = 'none';
+            ocultos++;
+        }
     });
+
+    console.log(`🔍 Filtro: ${visibles} visibles, ${ocultos} ocultos`);
 }
 
 async function initVentas() {
-    const token = localStorage.getItem('pos_token');
-    if (!token) return;
-
-    // Reset SOLO la primera vez por sesión
-    if (!estado._ventasInited) {
-        _catalogoEstado = {
-            pagina: 1, total: 0, hayMas: true, cargando: false,
-            categoriaId: null, busqueda: '', observer: null, _scrollIniciado: false
-        };
-    }
-
-    // ============================================================
-    // 🆕 SOLO CARGAR SI ES NECESARIO
-    // ============================================================
-    const contenedor = document.getElementById('catalogoProductos');
-    const necesitaCargar = !estado.productos.length || estado._productosCacheInvalidado;
-
-    if (necesitaCargar) {
-        console.log('📥 Cargando productos (necesario)');
-        await cargarProductosDesdeAPI(true);
-    } else if (contenedor && contenedor.children.length === 0) {
-        // Ya hay productos en memoria → solo renderizar
-        console.log(`⚡ Renderizando ${estado.productos.length} productos desde memoria`);
-        contenedor.innerHTML = estado.productos.map(p => renderCardProducto(p)).join('');
-        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
-    } else {
-        console.log(`⏭ Productos ya renderizados (${estado.productos.length} en memoria)`);
-    }
-
-    // Poblar filtro de categorías (solo una vez)
-    await poblarFiltroCategorias();
-
-    // Configurar el buscador
-    if (typeof BuscadorUI !== 'undefined') {
-        const inputBuscador = document.getElementById('buscador');
-        if (inputBuscador) {
-            inputBuscador.removeAttribute('data-buscador-ready');
-            inputBuscador._buscadorAPI = null;
-        }
-        setTimeout(() => BuscadorUI.init(), 150);
-    }
-
-    setTimeout(() => {
-        if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
-    }, 500);
-
-    if (estado._ventasInited) {
-        crearVentaUI('venta1', 1);
-        activarPestaña(estado.pestañaActiva || 'venta1');
+    // 🆕 Evitar ejecuciones simultáneas
+    if (estado._initVentasEnCurso) {
+        console.log('⏭ initVentas ya en curso, se omite');
         return;
     }
+    estado._initVentasEnCurso = true;
 
-    estado._ventasInited = true;
-    if (!estado.carritos.venta1) estado.carritos.venta1 = [];
+    try {
+         
+        const token = localStorage.getItem('pos_token');
+        if (!token) return;
 
-    setupTabsListener();
-    setupCatalogoListener();
-    setupContenedorVentasListener();
-    setupNuevaVentaBtn();
-    setupCerrarTodasBtn();
-    setupBuscadorCatalogo();
-    setupToggleVista();
+        // Reset SOLO la primera vez por sesión
+        if (!estado._ventasInited) {
+            _catalogoEstado = {
+                pagina: 1, total: 0, hayMas: true, cargando: false,
+                categoriaId: null, busqueda: '', observer: null, _scrollIniciado: false
+            };
+        }
+        // En initVentas, cuando ya hay productos en memoria:
+        if (estado.productos.length > 0 && contenedor.children.length > 0) {
+            // Reordenar sin re-renderizar
+            reordenarCatalogoEnDom(estado.productos);
+        }
 
-    crearVentaUI('venta1', 1);
-    initSplitter();
-    activarPestaña(estado.pestañaActiva || 'venta1');
+        // ============================================================
+        // 🆕 SOLO CARGAR SI ES NECESARIO
+        // ============================================================
+        const contenedor = document.getElementById('catalogoProductos');
+        const necesitaCargar = !estado.productos.length || estado._productosCacheInvalidado;
+
+        if (necesitaCargar) {
+            console.log('📥 Cargando productos (necesario)');
+            await cargarProductosDesdeAPI(true);
+        } else if (contenedor && contenedor.children.length === 0) {
+            // Ya hay productos en memoria → solo renderizar
+            console.log(`⚡ Renderizando ${estado.productos.length} productos desde memoria`);
+            contenedor.innerHTML = estado.productos.map(p => renderCardProducto(p)).join('');
+            if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
+        } else {
+            console.log(`⏭ Productos ya renderizados (${estado.productos.length} en memoria)`);
+        }
+
+        // Poblar filtro de categorías (solo una vez)
+        await poblarFiltroCategorias();
+
+        // Configurar el buscador
+        if (typeof BuscadorUI !== 'undefined') {
+            const inputBuscador = document.getElementById('buscador');
+            if (inputBuscador) {
+                inputBuscador.removeAttribute('data-buscador-ready');
+                inputBuscador._buscadorAPI = null;
+            }
+            setTimeout(() => BuscadorUI.init(), 150);
+        }
+
+        setTimeout(() => {
+            if (typeof refrescarStockCatalogo === 'function') refrescarStockCatalogoOptimizado();
+        }, 500);
+
+        if (estado._ventasInited) {
+            crearVentaUI('venta1', 1);
+            activarPestaña(estado.pestañaActiva || 'venta1');
+            return;
+        }
+
+        estado._ventasInited = true;
+        if (!estado.carritos.venta1) estado.carritos.venta1 = [];
+
+        setupTabsListener();
+        setupCatalogoListener();
+        setupContenedorVentasListener();
+        setupNuevaVentaBtn();
+        setupCerrarTodasBtn();
+        setupBuscadorCatalogo();
+        setupToggleVista();
+
+        crearVentaUI('venta1', 1);
+        initSplitter();
+        activarPestaña(estado.pestañaActiva || 'venta1');
+     } finally {
+        estado._initVentasEnCurso = false;
+    }
 }
 function setupTabsListener() {
     const tabs = document.getElementById('tabs');
@@ -1528,21 +1683,35 @@ function setupCerrarTodasBtn() {
     });
 }
 
+/* ============================================================
+   🆕 SETUP BUSCADOR DEL CATÁLOGO (v2 - TODO EN UNO)
+   Maneja completamente el buscador sin depender de BuscadorUI.js
+   ============================================================ */
 function setupBuscadorCatalogo() {
     const buscador = document.getElementById('buscador');
     const btnClear = document.getElementById('btnClearSearch');
+    const sugerenciasPanel = document.getElementById('sugerenciasPanelCatalogo');
+    
     if (!buscador || buscador._listenerAttached) return;
     buscador._listenerAttached = true;
 
     // ============================================================
-    // 🆕 DECLARAR VARIABLES DE DEBOUNCE (AQUÍ, fuera del listener)
+    // VARIABLES DE ESTADO
     // ============================================================
-    let _busquedaTimeout = null;              // Debounce para servidor
-    let _busquedaIndexedDBTimeout = null;     // Debounce para IndexedDB
-    let indiceNavegacion = -1;                // Navegación con teclado
+    let _busquedaTimeout = null;
+    let _busquedaIndexedDBTimeout = null;
+    let indiceNavegacion = -1;
+    
+    // Detección de lector de código de barras
+    let tecleandoRapido = false;
+    let timerEscaneoInactividad = null;
+    let ultimaTecla = 0;
+    const VELOCIDAD_LECTOR_MS = 30;
+    const ESPERA_FIN_ESCANEO_MS = 80;
+    const LONGITUD_MINIMA_ESCANEO = 8;
 
     // ============================================================
-    // 1. FILTRO DE CATEGORÍA — Server-side
+    // 1. FILTRO DE CATEGORÍA
     // ============================================================
     const selectCategoria = document.getElementById('filtroCategoria');
     if (selectCategoria && !selectCategoria._catAttached) {
@@ -1554,7 +1723,7 @@ function setupBuscadorCatalogo() {
     }
 
     // ============================================================
-    // 2. ESTADO INICIAL DEL INPUT
+    // 2. ESTADO INICIAL
     // ============================================================
     buscador.value = estado.terminoBusqueda || '';
     if (btnClear) {
@@ -1562,34 +1731,47 @@ function setupBuscadorCatalogo() {
     }
 
     // ============================================================
-    // LISTENER PRINCIPAL DEL BUSCADOR
+    // 3. LISTENER INPUT (búsqueda con debounce)
     // ============================================================
     buscador.addEventListener('input', () => {
         const valor = buscador.value.trim();
+        const ahora = Date.now();
 
+        // Detectar lector de código de barras
+        const diff = ahora - ultimaTecla;
+        ultimaTecla = ahora;
+        if (diff > 0 && diff < VELOCIDAD_LECTOR_MS) {
+            tecleandoRapido = true;
+        }
+        
+        clearTimeout(buscador._resetTecleo);
+        buscador._resetTecleo = setTimeout(() => {
+            tecleandoRapido = false;
+        }, 500);
+
+        // Actualizar estado
         estado.terminoBusqueda = buscador.value;
         guardarEstado();
-
-        if (btnClear) btnClear.style.display = valor ? 'block' : 'none';
         indiceNavegacion = -1;
 
-        // ============================================================
-        // CASO 1: BUSCADOR VACÍO → RESTAURAR TOP DESDE MEMORIA
-        // 🆕 NO llama a la API. Solo re-renderiza.
-        // ============================================================
+        if (btnClear) btnClear.style.display = valor ? 'block' : 'none';
+
+        // ------------------------------------------------------------
+        // CASO 1: Vacío → restaurar catálogo desde memoria
+        // ------------------------------------------------------------
         if (!valor) {
             clearTimeout(_busquedaTimeout);
             clearTimeout(_busquedaIndexedDBTimeout);
             _catalogoEstado.busqueda = '';
-
-            console.log('🔄 Restaurando catálogo completo desde memoria...');
-            rerenderizarCatalogoDesdeMemoria();   // 🆕 Helper que veremos abajo
+            
+            rerenderizarCatalogoDesdeMemoria();
+            ocultarSugerenciasPanel();
             return;
         }
 
-        // ============================================================
-        // CASO 2: ESCANEO DE CÓDIGO DE BARRAS → servidor directo
-        // ============================================================
+        // ------------------------------------------------------------
+        // CASO 2: Escaneo (8+ dígitos) → buscar en servidor
+        // ------------------------------------------------------------
         if (valor.length >= 8 && /^\d+$/.test(valor)) {
             clearTimeout(_busquedaTimeout);
             clearTimeout(_busquedaIndexedDBTimeout);
@@ -1597,15 +1779,13 @@ function setupBuscadorCatalogo() {
             return;
         }
 
-        // ============================================================
-        // CASO 3: BÚSQUEDA LOCAL INSTANTÁNEA (memoria)
-        // ============================================================
+        // ------------------------------------------------------------
+        // CASO 3: Búsqueda local instantánea
+        // ------------------------------------------------------------
         const locales = buscarLocal(valor);
-
         if (locales.length >= 3) {
             mostrarResultadosBusqueda(locales);
             clearTimeout(_busquedaTimeout);
-            // Buscar más en background (silencioso)
             _busquedaTimeout = setTimeout(() => buscarEnServidor(valor, true), 500);
             return;
         }
@@ -1614,9 +1794,9 @@ function setupBuscadorCatalogo() {
             mostrarResultadosBusqueda(locales);
         }
 
-        // ============================================================
-        // CASO 4: BÚSQUEDA EN INDEXEDDB (con debounce)
-        // ============================================================
+        // ------------------------------------------------------------
+        // CASO 4: IndexedDB (18,543 productos)
+        // ------------------------------------------------------------
         if (locales.length === 0 && valor.length >= 3) {
             clearTimeout(_busquedaIndexedDBTimeout);
             _busquedaIndexedDBTimeout = setTimeout(async () => {
@@ -1647,7 +1827,6 @@ function setupBuscadorCatalogo() {
                         mostrarResultadosBusqueda(formateados);
                     } else {
                         console.log(`⚠️ IndexedDB: 0 resultados en ${tiempo}ms`);
-                        mostrarSinResultados();
                     }
                 } catch (e) {
                     console.warn('⚠️ Error buscando en IndexedDB:', e);
@@ -1655,108 +1834,180 @@ function setupBuscadorCatalogo() {
             }, 200);
         }
 
-        // ============================================================
-        // CASO 5: SERVIDOR (fallback final)
-        // ============================================================
+        // ------------------------------------------------------------
+        // CASO 5: Fallback al servidor
+        // ------------------------------------------------------------
         clearTimeout(_busquedaTimeout);
         _busquedaTimeout = setTimeout(() => buscarEnServidor(valor), 400);
     });
+
     // ============================================================
-    // BOTÓN CLEAR — Restaura el top SIN llamar a la API
+    // 4. LISTENER KEYDOWN (navegación + atajos)
+    // ============================================================
+    buscador.addEventListener('keydown', (e) => {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const panel = document.getElementById('sugerenciasPanelCatalogo');
+    const sugerenciasVisibles = panel && panel.style.display === 'block';
+
+    // ============================================================
+    // 🆕 CTRL+1-5: Agregar sugerencia al carrito
+    // ============================================================
+    if (['1', '2', '3', '4', '5'].includes(e.key) && e.ctrlKey) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        console.log(`⌨️ Ctrl+${e.key} presionado`);
+
+        // Anti-rebote
+        const ahora = Date.now();
+        if (buscador._ultimoAtajo && (ahora - buscador._ultimoAtajo) < 200) {
+            console.log('⏭ Ignorado (debounce)');
+            return;
+        }
+        buscador._ultimoAtajo = ahora;
+
+        const indice = parseInt(e.key, 10) - 1;
+        const encontrados = buscador._ultimosEncontrados || [];
+
+        console.log(`  Índice: ${indice}`);
+        console.log(`  Encontrados: ${encontrados.length}`);
+
+        if (encontrados.length > indice) {
+            agregarItemAlCarrito(encontrados[indice], buscador.value);
+        } else {
+            console.log('  ⚠️ No hay sugerencia en ese índice');
+        }
+        return;
+    }
+
+    // ============================================================
+    // FLECHAS: Navegar sugerencias (si están visibles)
+    // ============================================================
+    if (sugerenciasVisibles) {
+        const items = panel.querySelectorAll('.sugerencia-item');
+        const activo = panel.querySelector('.sugerencia-item.active');
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const idx = activo ? Array.from(items).indexOf(activo) : -1;
+            if (idx < items.length - 1) {
+                activo?.classList.remove('active');
+                items[idx + 1].classList.add('active');
+                items[idx + 1].scrollIntoView({ block: 'nearest' });
+            }
+            return;
+        }
+
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const idx = activo ? Array.from(items).indexOf(activo) : items.length;
+            if (idx > 0) {
+                activo?.classList.remove('active');
+                items[idx - 1].classList.add('active');
+                items[idx - 1].scrollIntoView({ block: 'nearest' });
+            }
+            return;
+        }
+
+        if (e.key === 'Enter' && activo) {
+            e.preventDefault();
+            // Click en la sugerencia activa
+            activo.click();
+            return;
+        }
+    }
+
+    // ============================================================
+    // NAVEGACIÓN EN PRODUCTOS (↑ ↓ Enter Escape)
+    // ============================================================
+    const productosVisibles = Array.from(contenedor.querySelectorAll('.producto'))
+        .filter(c => c.style.display !== 'none');
+
+    if (e.key === 'ArrowDown' && !sugerenciasVisibles) {
+        e.preventDefault();
+        if (productosVisibles.length === 0) return;
+        indiceNavegacion = Math.min(indiceNavegacion + 1, productosVisibles.length - 1);
+        resaltarProducto(productosVisibles[indiceNavegacion]);
+        return;
+    }
+
+    if (e.key === 'ArrowUp' && !sugerenciasVisibles) {
+        e.preventDefault();
+        if (productosVisibles.length === 0) return;
+        indiceNavegacion = Math.max(indiceNavegacion - 1, 0);
+        resaltarProducto(productosVisibles[indiceNavegacion]);
+        return;
+    }
+
+    if (e.key === 'Enter' && !sugerenciasVisibles) {
+        e.preventDefault();
+        if (indiceNavegacion >= 0 && indiceNavegacion < productosVisibles.length) {
+            const card = productosVisibles[indiceNavegacion];
+            const btn = card.querySelector('.agregar');
+            if (btn && !btn.disabled) {
+                btn.click();
+                indiceNavegacion = -1;
+                buscador.focus();
+                buscador.select();
+            }
+        }
+        return;
+    }
+
+    if (e.key === 'Escape') {
+        buscador.value = '';
+        estado.terminoBusqueda = '';
+        if (btnClear) btnClear.style.display = 'none';
+        guardarEstado();
+        _catalogoEstado.busqueda = '';
+        rerenderizarCatalogoDesdeMemoria();
+        ocultarSugerenciasPanel();
+        indiceNavegacion = -1;
+        return;
+    }
+    // ============================================================
+    // 🆕 CERRAR SUGERENCIAS AL HACER CLICK AFUERA
+    // ============================================================
+    if (!document._clickFueraBuscadorAttached) {
+        document._clickFueraBuscadorAttached = true;
+        document.addEventListener('click', (e) => {
+            const buscadorEl = document.getElementById('buscador');
+            const panelEl = document.getElementById('sugerenciasPanelCatalogo');
+            
+            if (!buscadorEl || !panelEl) return;
+            
+            // Si el click está fuera del buscador Y del panel
+            if (!buscadorEl.contains(e.target) && !panelEl.contains(e.target)) {
+                panelEl.style.display = 'none';
+            }
+        });
+    }
+
+});
+
+    // ============================================================
+    // 5. BOTÓN CLEAR
     // ============================================================
     if (btnClear && !btnClear._clearAttached) {
         btnClear._clearAttached = true;
         btnClear.addEventListener('click', () => {
-            console.log('🧹 Limpiando búsqueda, restaurando desde memoria...');
-
             buscador.value = '';
             estado.terminoBusqueda = '';
             btnClear.style.display = 'none';
             guardarEstado();
 
             _catalogoEstado.busqueda = '';
-
-            // 🆕 SOLO re-renderizar desde memoria (NO llamar a la API)
             rerenderizarCatalogoDesdeMemoria();
+            ocultarSugerenciasPanel();
 
             buscador.focus();
         });
     }
 
-
     // ============================================================
-    // 5. NAVEGACIÓN CON TECLADO (↑ ↓ Enter Escape)
-    //    NOTA: El dropdown de sugerencias lo maneja BuscadorUI.js
-    // ============================================================
-   
-    buscador.addEventListener('keydown', (e) => {
-        const contenedor = document.getElementById('catalogoProductos');
-        if (!contenedor) return;
-
-        const productosVisibles = Array.from(contenedor.querySelectorAll('.producto'))
-            .filter(c => c.style.display !== 'none');
-
-        // --- ArrowDown ---
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (productosVisibles.length === 0) return;
-
-            indiceNavegacion = Math.min(indiceNavegacion + 1, productosVisibles.length - 1);
-            resaltarProducto(productosVisibles[indiceNavegacion]);
-            return;
-        }
-
-        // --- ArrowUp ---
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (productosVisibles.length === 0) return;
-
-            indiceNavegacion = Math.max(indiceNavegacion - 1, 0);
-            resaltarProducto(productosVisibles[indiceNavegacion]);
-            return;
-        }
-
-        // --- Enter ---
-        if (e.key === 'Enter') {
-            e.preventDefault();
-
-            if (indiceNavegacion >= 0 && indiceNavegacion < productosVisibles.length) {
-                const card = productosVisibles[indiceNavegacion];
-                const btn = card.querySelector('.agregar');
-
-                if (btn && !btn.disabled) {
-                    btn.click();
-                    indiceNavegacion = -1;
-                    buscador.focus();
-                    buscador.select();
-                } else if (btn && btn.disabled) {
-                    toast('Producto agotado', 'error');
-                }
-            }
-            return;
-        }        
-        // ESCAPE — Restaura el top SIN llamar a la API
-        // ============================================================
-        if (e.key === 'Escape') {
-            console.log('⌨️ Escape presionado, restaurando desde memoria...');
-
-            buscador.value = '';
-            estado.terminoBusqueda = '';
-            if (btnClear) btnClear.style.display = 'none';
-            guardarEstado();
-
-            _catalogoEstado.busqueda = '';
-
-            // 🆕 SOLO re-renderizar desde memoria (NO llamar a la API)
-            rerenderizarCatalogoDesdeMemoria();
-
-            indiceNavegacion = -1;
-            return;
-        }
-    });
-
-    // ============================================================
-    // 6. HELPER: Resaltar producto navegado
+    // 6. HELPER: RESALTAR PRODUCTO
     // ============================================================
     function resaltarProducto(card) {
         document.querySelectorAll('.producto.kbd-active')
@@ -1767,17 +2018,170 @@ function setupBuscadorCatalogo() {
     }
 
     // ============================================================
-    // 7. HINT VISUAL DEL BUSCADOR
+    // 7. HELPER: OCULTAR SUGERENCIAS
+    // ============================================================
+    function ocultarSugerenciasPanel() {
+        if (sugerenciasPanel) {
+            sugerenciasPanel.style.display = 'none';
+            sugerenciasPanel.innerHTML = '';
+        }
+    }
+
+    /* ============================================================
+    🆕 AGREGAR ITEM AL CARRITO (con soporte IndexedDB)
+    Si el producto no está en el DOM, busca sus datos en IndexedDB
+    ============================================================ */
+    async function agregarItemAlCarrito(item, textoQuery) {
+        if (!item) return;
+
+        // Anti-reentrada
+        if (buscador._agregandoItem) return;
+        buscador._agregandoItem = true;
+
+        try {
+            const ref = item._ref || item;
+            const idProducto = ref.idProducto || item.idProducto;
+            const nombre = ref.nombre || item.nombre || 'Producto';
+            const sku = ref.sku || ref.codigoInterno || item.sku || '';
+            const precio = ref.precioVenta || item.precioVenta || 0;
+            const stockActual = ref.stockActual != null ? ref.stockActual : item.stockActual;
+
+            if (!sku) {
+                console.warn('⚠️ Sin SKU');
+                return;
+            }
+
+            // ============================================================
+            // 1. Intentar obtener la card del DOM
+            // ============================================================
+            let card = document.querySelector(`.producto[data-id-producto="${idProducto}"]`);
+            let stockBase = 0;
+
+            if (card) {
+                // Producto está en el DOM → usar sus datos
+                stockBase = parseInt(card.dataset.stockBase || card.dataset.stock, 10) || 0;
+            } else {
+                // 🆕 Producto NO está en el DOM → usar datos del item
+                stockBase = stockActual || 0;
+                console.log(`  ℹ️ Producto no está en el DOM, usando datos del resultado: stock=${stockBase}`);
+            }
+
+            // ============================================================
+            // 2. Extraer cantidad del query (ej: "5 dove")
+            // ============================================================
+            const cantidadSolicitada = (typeof Buscador !== 'undefined' && 
+                typeof Buscador.extraerCantidad === 'function')
+                ? Buscador.extraerCantidad(textoQuery || buscador.value).cantidad
+                : 1;
+
+            const ventaId = estado.pestañaActiva || 'venta1';
+            const skuNorm = String(sku).trim().toUpperCase();
+
+            // ============================================================
+            // 3. Calcular reservas en otros carritos
+            // ============================================================
+            let reservadoTotal = 0;
+            for (const vid in estado.carritos) {
+                const c = estado.carritos[vid] || [];
+                for (const i of c) {
+                    if (String(i.sku || '').trim().toUpperCase() === skuNorm) {
+                        reservadoTotal += parseInt(i.cantidad, 10) || 0;
+                    }
+                }
+            }
+
+            const itemCarrito = estado.carritos[ventaId]?.find(i => 
+                String(i.sku || '').trim().toUpperCase() === skuNorm
+            );
+            const cantidadActual = itemCarrito ? itemCarrito.cantidad : 0;
+            const reservadoOtros = reservadoTotal - cantidadActual;
+            const espacioDisponible = stockBase - reservadoOtros;
+
+            if (espacioDisponible < 1) {
+                if (typeof toast === 'function') {
+                    const detalle = reservadoOtros > 0 ? ` (${reservadoOtros} en otros carritos)` : '';
+                    toast(`"${nombre}" sin stock disponible${detalle}`, 'error');
+                }
+                return;
+            }
+
+            const cantidadFinal = Math.min(cantidadSolicitada, espacioDisponible);
+            const recortado = cantidadFinal < cantidadSolicitada;
+
+            // ============================================================
+            // 4. Sumar o crear item en carrito
+            // ============================================================
+            if (itemCarrito) {
+                itemCarrito.cantidad += cantidadFinal;
+            } else {
+                estado.carritos[ventaId].push({
+                    idProducto: parseInt(idProducto, 10),
+                    sku: skuNorm,
+                    nombre,
+                    precio: parseFloat(precio) || 0,
+                    cantidad: cantidadFinal,
+                    stock: stockBase
+                });
+            }
+
+            // ============================================================
+            // 5. Refrescar UI
+            // ============================================================
+            if (typeof renderCarrito === 'function') renderCarrito(ventaId);
+            if (typeof guardarEstado === 'function') guardarEstado();
+            if (typeof actualizarConteos === 'function') actualizarConteos();
+            if (typeof refrescarStockCatalogoOptimizado === 'function') {
+                refrescarStockCatalogoOptimizado();
+            }
+
+            // Toast
+            if (typeof toast === 'function') {
+                const total = cantidadActual + cantidadFinal;
+                if (recortado) {
+                    toast(`⚠️ "${nombre}" — solo había ${espacioDisponible}. Total: ${total}`, 'error');
+                } else if (cantidadFinal > 1) {
+                    toast(`✅ ${cantidadFinal}× "${nombre}"${cantidadActual > 0 ? ` (total: ${total})` : ''}`);
+                } else {
+                    toast(`✅ "${nombre}"${cantidadActual > 0 ? ` (total: ${total})` : ' agregado'}`);
+                }
+            }
+
+            // Flash visual (si está en el DOM)
+            if (card) {
+                card.classList.add('flash-agregado');
+                setTimeout(() => card.classList.remove('flash-agregado'), 900);
+            }
+
+            // ============================================================
+            // 6. Cerrar sugerencias y limpiar
+            // ============================================================
+            if (typeof ocultarSugerenciasPanel === 'function') {
+                ocultarSugerenciasPanel();
+            }
+            buscador.focus();
+
+        } catch (err) {
+            console.error('❌ Error agregando item:', err);
+        } finally {
+            setTimeout(() => { buscador._agregandoItem = false; }, 100);
+        }
+    }
+
+
+    // Exponer para uso interno
+    buscador._agregarItemAlCarrito = agregarItemAlCarrito;
+    buscador._ocultarSugerencias = ocultarSugerenciasPanel;
+
+    // ============================================================
+    // 9. HINT VISUAL DEL BUSCADOR
     // ============================================================
     const hint = document.getElementById('buscadorHint');
-    const buscadorEl = document.getElementById('buscador');
-
-    if (hint && buscadorEl && !hint._attached) {
+    if (hint && buscador && !hint._attached) {
         hint._attached = true;
 
         function actualizarHint() {
-            const estaVacio = buscadorEl.value.trim().length === 0;
-            const tieneFoco = document.activeElement === buscadorEl;
+            const estaVacio = buscador.value.trim().length === 0;
+            const tieneFoco = document.activeElement === buscador;
             const nuncaUsado = !localStorage.getItem('pos_hint_visto');
 
             if (estaVacio && (tieneFoco || nuncaUsado)) {
@@ -1787,46 +2191,82 @@ function setupBuscadorCatalogo() {
             }
         }
 
-        buscadorEl.addEventListener('focus', () => {
+        buscador.addEventListener('focus', () => {
             localStorage.setItem('pos_hint_visto', '1');
             actualizarHint();
         });
 
         hint.classList.add('oculto');
 
-        buscadorEl.addEventListener('focus', actualizarHint);
+        buscador.addEventListener('focus', actualizarHint);
+        buscador.addEventListener('blur', () => hint.classList.add('oculto'));
+        buscador.addEventListener('input', actualizarHint);
 
-        buscadorEl.addEventListener('blur', () => {
-            hint.classList.add('oculto');
-        });
-
-        buscadorEl.addEventListener('input', actualizarHint);
-
-        if (buscadorEl.value.trim().length > 0) {
+        if (buscador.value.trim().length > 0) {
             hint.classList.add('oculto');
         }
     }
+
+    console.log('✅ setupBuscadorCatalogo: inicializado completamente');
 }
 
+/* ============================================================
+   🆕 SETUP TOGGLE VISTA (v2) — Icono compacto
+   ============================================================ */
 function setupToggleVista() {
     const btn = document.getElementById('btnToggle');
+    const iconSpan = document.getElementById('btnToggleIcon');
     const productosList = document.querySelector('#productos .productos');
+
     if (!btn || !productosList || btn._listenerAttached) return;
     btn._listenerAttached = true;
 
-    productosList.classList.remove('grid', 'lista');
-    productosList.classList.add(estado.vistaCatalogo === 'lista' ? 'lista' : 'grid');
-    btn.textContent = estado.vistaCatalogo === 'lista' ? '🔲 Vista grid' : '📋 Vista lista';
+    // ============================================================
+    // 1. Aplicar vista inicial
+    // ============================================================
+    const vistaInicial = estado.vistaCatalogo === 'grid' ? 'grid' : 'lista';
 
+    productosList.classList.remove('grid', 'lista');
+    productosList.classList.add(vistaInicial);
+
+    actualizarIcono(vistaInicial);
+
+    // ============================================================
+    // 2. Listener
+    // ============================================================
     btn.addEventListener('click', () => {
         const esGrid = productosList.classList.contains('grid');
         const nueva = esGrid ? 'lista' : 'grid';
+
         productosList.classList.toggle('grid', !esGrid);
         productosList.classList.toggle('lista', esGrid);
+
         estado.vistaCatalogo = nueva;
-        btn.textContent = nueva === 'lista' ? '🔲 Vista grid' : '📋 Vista lista';
+        actualizarIcono(nueva);
         guardarEstado();
+
+        // 🆕 Refrescar stock después del cambio de vista
+        if (typeof refrescarStockCatalogoOptimizado === 'function') {
+            setTimeout(() => refrescarStockCatalogoOptimizado(), 50);
+        }
     });
+
+    // ============================================================
+    // 3. Helper: actualizar icono según vista
+    // ============================================================
+    function actualizarIcono(vista) {
+        if (!iconSpan) return;
+
+        if (vista === 'grid') {
+            // Actualmente en grid → el icono muestra "cambiar a lista"
+            iconSpan.textContent = '☰';
+            btn.title = 'Cambiar a lista';
+        } else {
+            // Actualmente en lista → el icono muestra "cambiar a grid"
+            iconSpan.textContent = '⊞';
+            btn.title = 'Cambiar a grid';
+        }
+    }
 }
 
 function crearVentaUI(idVenta, numero) {
@@ -2573,6 +3013,12 @@ function actualizarResumenModal() {
     document.getElementById('finResumenTotal').textContent = formato(total);
 }
 
+/* ============================================================
+   🆕 CONFIRMAR VENTA v3 — Reordena el DOM sin re-renderizar
+   - Actualiza el top en background
+   - Reordena las cards existentes (sin reemplazar el DOM)
+   - Mantiene el observer intacto
+   ============================================================ */
 async function confirmarVenta(e) {
     e.preventDefault();
 
@@ -2585,6 +3031,9 @@ async function confirmarVenta(e) {
         return;
     }
 
+    // ============================================================
+    // 1. Recopilar datos
+    // ============================================================
     const idClienteRaw = document.getElementById('finCliente').value;
     const metodoPago = document.getElementById('finMetodoPago').value;
     const descuento = parseFloat(document.getElementById('finDescuento').value) || 0;
@@ -2601,6 +3050,9 @@ async function confirmarVenta(e) {
         }))
     };
 
+    // ============================================================
+    // 2. POST al backend
+    // ============================================================
     const form = document.getElementById('formFinalizarVenta');
     const btnSubmit = form.querySelector('button[type="submit"]');
     const textoOriginal = btnSubmit.textContent;
@@ -2615,17 +3067,24 @@ async function confirmarVenta(e) {
     if (!resp.ok) return;
 
     const venta = resp.data;
-    console.log('Venta creada:', venta);
+    console.log('✅ Venta creada:', venta);
 
+    // ============================================================
+    // 3. Cerrar modal + notificar
+    // ============================================================
     hideModal(document.getElementById('modalFinalizarVenta'));
-
     toast(`✅ Venta ${venta.codigoFactura} registrada - Total: ${formato(venta.totalFinal)}`);
 
+    // ============================================================
+    // 4. Limpiar carrito
+    // ============================================================
     estado.carritos[ventaId] = [];
     renderCarrito(ventaId);
     actualizarConteos();
-    refrescarStockCatalogoOptimizado();
 
+    // ============================================================
+    // 5. Agregar al historial local
+    // ============================================================
     estado.historial.push({
         idVenta: venta.idVenta,
         codigoFactura: venta.codigoFactura,
@@ -2636,18 +3095,146 @@ async function confirmarVenta(e) {
     });
     guardarEstado();
 
-    // 🆕 Invalidar caché y forzar UNA SOLA recarga del top
+    // ============================================================
+    // 6. Actualizar stock en memoria (restar lo vendido)
+    // ============================================================
+    if (venta.detalles && venta.detalles.length > 0) {
+        venta.detalles.forEach(detalle => {
+            const producto = estado.productos.find(p => p.idProducto === detalle.idProducto);
+            if (producto) {
+                producto.stockActual = Math.max(0, (producto.stockActual || 0) - detalle.cantidad);
+                producto.vecesVendido = (producto.vecesVendido || 0) + detalle.cantidad;
+            }
+        });
+    }
+
+    // Refrescar stock visible
+    if (typeof refrescarStockCatalogoOptimizado === 'function') {
+        refrescarStockCatalogoOptimizado();
+    }
+
+    // ============================================================
+    // 7. Invalidar caché del top
+    // ============================================================
     estado._productosCacheInvalidado = true;
-    estado._ultimaCargaTop = 0;
     _controlCargaTop.ultimaCargaExitosa = 0;
 
-    // 🆕 UNA SOLA llamada (la promesa única deduplica si algo más la llama)
-    await cargarProductosDesdeAPI(true);
+    // ============================================================
+    // 8. 🆕 ACTUALIZAR Y REORDENAR EL TOP EN BACKGROUND
+    //    SIN reemplazar el DOM
+    // ============================================================
+    setTimeout(async () => {
+        try {
+            console.log('📥 Actualizando top en background...');
 
+            // Forzar recarga del top desde el servidor
+            const productosNuevos = await cargarTopUnaVez(true);
+
+            if (!productosNuevos || productosNuevos.length === 0) {
+                console.warn('⚠️ No se pudo actualizar el top');
+                return;
+            }
+
+            console.log(`✅ Top actualizado en memoria (${productosNuevos.length} productos)`);
+
+            // 🆕 REORDENAR EL DOM SIN RE-RENDERIZAR
+            reordenarCatalogoEnDom(productosNuevos);
+
+            // Refrescar stock visible después del reordenamiento
+            if (typeof refrescarStockCatalogoOptimizado === 'function') {
+                setTimeout(() => refrescarStockCatalogoOptimizado(), 50);
+            }
+
+        } catch (err) {
+            console.warn('⚠️ Error actualizando top:', err);
+        }
+    }, 500);
+
+    // ============================================================
+    // 9. Limpiar formulario
+    // ============================================================
     form.reset();
     _ventaIdEnProceso = null;
 }
+/* ============================================================
+   🆕 REORDENAR CATÁLOGO EN EL DOM (sin re-renderizar)
+   Mueve las cards existentes al nuevo orden, sin crear ni destruir
+   elementos. El observer sigue funcionando.
+   ============================================================ */
+function reordenarCatalogoEnDom(productosOrdenados) {
+    const t0 = performance.now();
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
 
+    // 1. Obtener todas las cards actuales en el DOM
+    const cardsActuales = contenedor.querySelectorAll('.producto');
+    if (cardsActuales.length === 0) return;
+
+    // 2. Crear un mapa: idProducto → card actual
+    const cardsPorId = new Map();
+    cardsActuales.forEach(card => {
+        const id = parseInt(card.dataset.idProducto, 10);
+        if (id) cardsPorId.set(id, card);
+    });
+
+    // 3. Detectar si el orden cambió
+    let hayCambios = false;
+    const nuevoOrden = [];
+
+    for (let i = 0; i < productosOrdenados.length; i++) {
+        const producto = productosOrdenados[i];
+        const card = cardsPorId.get(producto.idProducto);
+
+        if (card) {
+            // Actualizar el stock base en el dataset
+            card.dataset.stockBase = producto.stockActual;
+            card.dataset.stock = producto.stockActual;
+
+            // Verificar si está en la posición correcta
+            const posicionActual = Array.from(cardsActuales).indexOf(card);
+            if (posicionActual !== i) {
+                hayCambios = true;
+            }
+
+            nuevoOrden.push(card);
+        }
+    }
+
+    // 4. Si no hay cambios, salir
+    if (!hayCambios) {
+        console.log('⏭ Orden sin cambios, omitiendo reordenamiento');
+        return;
+    }
+
+    console.log(`🔄 Reordenando ${nuevoOrden.length} productos...`);
+
+    // 5. Reordenar el DOM eficientemente
+    //    Técnica: mover cada card a su posición correcta
+    const fragment = document.createDocumentFragment();
+    nuevoOrden.forEach(card => fragment.appendChild(card));
+
+    // 6. Limpiar el contenedor y agregar el fragment (una sola operación)
+    contenedor.innerHTML = '';
+    contenedor.appendChild(fragment);
+
+    const tiempo = (performance.now() - t0).toFixed(2);
+    console.log(`✅ Catálogo reordenado en ${tiempo}ms`);
+
+    // 7. 🆕 Importante: re-inicializar el observer (las cards se "movieron")
+    //    El observer sigue siendo válido porque los elementos son los mismos,
+    //    pero el IntersectionObserver puede necesitar re-evaluar
+    if (typeof _observerCatalogo !== 'undefined' && _observerCatalogo) {
+        // Re-observar todas las cards (por si se desconectaron al mover)
+        nuevoOrden.forEach(card => {
+            try {
+                _observerCatalogo.unobserve(card);
+                _observerCatalogo.observe(card);
+            } catch (e) {
+                // Ignorar
+            }
+        });
+    }
+}
 function setupFinalizarVentaModal() {
     const modal = document.getElementById('modalFinalizarVenta');
     const form = document.getElementById('formFinalizarVenta');
@@ -6290,8 +6877,9 @@ function renderAccesosRapidos() {
 }
 
 /* ============================================================
-   🆕 REFRESCAR STOCK — Versión robusta SIN IntersectionObserver
-   Usa offsetTop/offsetHeight solo para el viewport (rápido)
+   🆕 REFRESCAR STOCK — Auto-recuperación
+   Si el observer está vacío o las referencias se perdieron,
+   las regenera automáticamente.
    ============================================================ */
 function refrescarStockCatalogoOptimizado() {
     const t0 = performance.now();
@@ -6299,7 +6887,7 @@ function refrescarStockCatalogoOptimizado() {
     if (!contenedor) return;
 
     // ============================================================
-    // 1. Calcular reservas por SKU (una sola pasada)
+    // 1. Calcular reservas por SKU
     // ============================================================
     const reservasPorSku = new Map();
     for (const vid in estado.carritos) {
@@ -6314,84 +6902,73 @@ function refrescarStockCatalogoOptimizado() {
     }
 
     // ============================================================
-    // 2. Determinar el viewport
+    // 2. Determinar candidatos (con auto-recuperación)
     // ============================================================
-    const scroller = document.getElementById('productos') || contenedor;
-    const scrollTop = scroller.scrollTop || 0;
-    const clientHeight = scroller.clientHeight || window.innerHeight;
-    const buffer = 500;
+    const usarObserver = _productosVisiblesCatalogo && _productosVisiblesCatalogo.size > 0;
+    const candidatos = usarObserver 
+        ? Array.from(_productosVisiblesCatalogo)
+        : Array.from(contenedor.querySelectorAll('.producto'));
 
-    const inicio = scrollTop - buffer;
-    const fin = scrollTop + clientHeight + buffer;
-
-    // ============================================================
-    // 3. Iterar todos los productos y procesar solo los visibles
-    // ============================================================
-    const productos = contenedor.querySelectorAll('.producto');
     let actualizados = 0;
-    let saltados = 0;
 
-    for (let i = 0; i < productos.length; i++) {
-        const card = productos[i];
+    for (let i = 0; i < candidatos.length; i++) {
+        const card = candidatos[i];
+        if (!card.isConnected) continue;
 
-        // ---- Skip si está fuera del viewport ----
-        const top = card.offsetTop;
-        const altura = card.offsetHeight || 48;
-        const bottom = top + altura;
-
-        if (bottom < inicio || top > fin) {
-            saltados++;
-            continue;
+        // 🆕 Cachear referencias bajo demanda
+        if (!card._stockEl) {
+            card._stockEl = card.querySelector('.prod-stock');
+        }
+        if (!card._btnEl) {
+            card._btnEl = card.querySelector('.agregar');
         }
 
-        // ---- Obtener el SKU (con fallback) ----
+        // 🆕 SKU con fallback
         let sku = card.dataset.skuUpper;
         if (!sku) {
             sku = String(card.dataset.sku || '').trim().toUpperCase();
+            if (sku) card.dataset.skuUpper = sku;
         }
         if (!sku) continue;
 
-        // ---- Calcular stock disponible ----
+        // Calcular stock
         const stockBase = parseInt(card.dataset.stockBase || card.dataset.stock, 10) || 0;
         const reservado = reservasPorSku.get(sku) || 0;
         const disponible = Math.max(0, stockBase - reservado);
 
-        // ---- Obtener referencias (con fallback) ----
-        const stockEl = card._stockEl || card.querySelector('.prod-stock');
-        const btnEl = card._btnEl || card.querySelector('.agregar');
-
-        // ---- Actualizar indicador de stock ----
-        if (stockEl) {
+        // Actualizar stock
+        if (card._stockEl) {
             const textoNuevo = disponible <= 0 
                 ? '⛔ Sin stock' 
                 : `📦 ${disponible} disponibles`;
             
-            if (stockEl.textContent !== textoNuevo) {
-                stockEl.textContent = textoNuevo;
+            if (card._stockEl.textContent !== textoNuevo) {
+                card._stockEl.textContent = textoNuevo;
                 if (disponible <= 10) {
-                    stockEl.style.color = '#dc2626';
-                    stockEl.style.background = 'rgba(220, 38, 38, 0.10)';
+                    card._stockEl.style.color = '#dc2626';
+                    card._stockEl.style.background = 'rgba(220, 38, 38, 0.10)';
                 } else {
-                    stockEl.style.color = '#16a34a';
-                    stockEl.style.background = 'rgba(22, 163, 74, 0.10)';
+                    card._stockEl.style.color = '#16a34a';
+                    card._stockEl.style.background = 'rgba(22, 163, 74, 0.10)';
                 }
             }
         }
 
-        // ---- Actualizar botón ----
-        if (btnEl) {
+        // Actualizar botón
+        if (card._btnEl) {
             const disabled = disponible <= 0;
             const textoBoton = disabled ? 'Sin stock' : '+ Agregar';
             
-            if (btnEl.disabled !== disabled) btnEl.disabled = disabled;
-            if (btnEl.textContent !== textoBoton) btnEl.textContent = textoBoton;
+            if (card._btnEl.disabled !== disabled) card._btnEl.disabled = disabled;
+            if (card._btnEl.textContent !== textoBoton) card._btnEl.textContent = textoBoton;
         }
 
         actualizados++;
     }
 
     const tiempo = (performance.now() - t0).toFixed(2);
-    console.log(`🔄 Stock: ${actualizados} visibles, ${saltados} saltados (${tiempo}ms)`);
+    const modo = usarObserver ? '👁️ observer' : '📦 todos';
+    console.log(`🔄 Stock: ${actualizados} actualizados [${modo}] (${tiempo}ms)`);
 }
 
 /* ============================================================
@@ -6681,51 +7258,40 @@ if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
     console.log('🛠️ Debug panel listo. Escribe debug.help() para ver comandos.');
 }
 /* ============================================================
-   🆕 Restaura el catálogo completo desde memoria
-   Aplica filtros activos (categoría, búsqueda) sin llamar a la API
+   🆕 RESTAURAR CATÁLOGO DESDE MEMORIA
+   - Renderiza el top completo
+   - 🆕 Reinicializa observer y referencias
    ============================================================ */
 function rerenderizarCatalogoDesdeMemoria() {
     const contenedor = document.getElementById('catalogoProductos');
     if (!contenedor) return;
 
-    // Si no hay productos en memoria, mostrar mensaje
     if (!estado.productos || estado.productos.length === 0) {
-        console.warn('⚠️ No hay productos en memoria para restaurar');
-        contenedor.innerHTML = `
-            <div style="grid-column:1/-1; text-align:center; padding:40px 20px; color:var(--text-muted);">
-                <div style="font-size:36px; opacity:0.5; margin-bottom:8px;">📦</div>
-                <div style="font-weight:600;">No hay productos para mostrar</div>
-            </div>`;
+        contenedor.innerHTML = `<p style="text-align:center;color:#64748b;padding:20px;">No hay productos.</p>`;
         return;
     }
 
     // Aplicar filtro de categoría si está activo
     let productos = estado.productos;
     const catId = _catalogoEstado.categoriaId;
-
     if (catId) {
         productos = productos.filter(p => p.idCategoria === catId);
-        console.log(`📂 Filtro categoría activo: ${productos.length} productos`);
     }
 
     // Renderizar
     contenedor.innerHTML = productos.map(p => renderCardProducto(p)).join('');
-    cachearReferenciasProductos();   // 🆕
-    inicializarObserverCatalogo();   // 🆕
 
-    // Refrescar stock
-    if (typeof refrescarStockCatalogo === 'function') {
-        refrescarStockCatalogoOptimizado();
+    // 🆕 CRÍTICO: Reinicializar observer y referencias
+    if (typeof inicializarObserverCatalogo === 'function') {
+        inicializarObserverCatalogo();
     }
 
-    // Refrescar buscador
-    if (typeof refrescarBuscador === 'function') {
-        refrescarBuscador();
+    // 🆕 Refrescar stock visible
+    if (typeof refrescarStockCatalogoOptimizado === 'function') {
+        setTimeout(() => refrescarStockCatalogoOptimizado(), 50);
     }
 
-
-
-    console.log(`✅ Catálogo restaurado: ${productos.length} productos (memoria)`);
+    console.log(`⚡ Catálogo restaurado: ${productos.length} productos`);
 }
 /* ============================================================
    🆕 Muestra mensaje de "sin resultados"
@@ -6859,29 +7425,139 @@ async function initConfig() {
 
 let _observerCatalogo = null;
 let _productosVisiblesCatalogo = new Set();
-
 function inicializarObserverCatalogo() {
-    if (_observerCatalogo) _observerCatalogo.disconnect();
-    _productosVisiblesCatalogo.clear();
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
 
-    const root = document.getElementById('productos') || null;
+    const productos = contenedor.querySelectorAll('.producto');
+    if (productos.length === 0) return;
 
-    _observerCatalogo = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                _productosVisiblesCatalogo.add(entry.target);
-            } else {
-                _productosVisiblesCatalogo.delete(entry.target);
-            }
-        });
-    }, {
-        root: root,
-        rootMargin: '300px 0px',
-        threshold: 0
+    // 1. Cachear referencias
+    let cacheadas = 0;
+    productos.forEach(card => {
+        if (!card._stockEl) card._stockEl = card.querySelector('.prod-stock');
+        if (!card._btnEl) card._btnEl = card.querySelector('.agregar');
+        if (!card.dataset.skuUpper && card.dataset.sku) {
+            card.dataset.skuUpper = String(card.dataset.sku).trim().toUpperCase();
+        }
+        if (card._stockEl && card._btnEl) cacheadas++;
     });
 
-    document.querySelectorAll('#catalogoProductos .producto').forEach(p => {
-        _observerCatalogo.observe(p);
+    // 2. Calcular visibles AHORA
+    _productosVisiblesCatalogo.clear();
+    recalcularVisiblesCatalogoManual();
+
+    // 3. 🆕 Listener de scroll en WINDOW (no en el contenedor)
+    if (!window._scrollListenerCatalogo) {
+        window._scrollListenerCatalogo = true;
+
+        let scrollTimeout = null;
+        const onScroll = () => {
+            if (scrollTimeout) return;
+            scrollTimeout = setTimeout(() => {
+                scrollTimeout = null;
+                recalcularVisiblesCatalogoManual();
+            }, 100);
+        };
+
+        // 🆕 Escuchar scroll en window Y en el contenedor (por si acaso)
+        window.addEventListener('scroll', onScroll, { passive: true });
+        
+        const scroller = document.getElementById('productos');
+        if (scroller) {
+            scroller.addEventListener('scroll', onScroll, { passive: true });
+        }
+
+        const cat = document.getElementById('catalogoProductos');
+        if (cat) {
+            cat.addEventListener('scroll', onScroll, { passive: true });
+        }
+
+        console.log('✅ Listener de scroll instalado en window + contenedores');
+    }
+
+    // 4. Listener de resize (cambia la ventana)
+    if (!window._resizeListenerCatalogo) {
+        window._resizeListenerCatalogo = true;
+        window.addEventListener('resize', () => {
+            recalcularVisiblesCatalogoManual();
+        }, { passive: true });
+    }
+
+    console.log(`📌 ${cacheadas}/${productos.length} referencias cacheadas`);
+    console.log(`👁️ ${_productosVisiblesCatalogo.size} visibles calculados`);
+}
+/* ============================================================
+   🆕 RECALCULAR VISIBLES — Versión robusta con getBoundingClientRect
+   Funciona con CUALQUIER layout (grid, flex, scroll en body, etc.)
+   ============================================================ */
+function recalcularVisiblesCatalogoManual() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const productos = contenedor.querySelectorAll('.producto');
+    if (productos.length === 0) return;
+
+    // ============================================================
+    // Usar el VIEWPORT completo de la ventana
+    // ============================================================
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    const buffer = 500;
+
+    // Rango vertical visible
+    const inicio = -buffer;
+    const fin = viewportHeight + buffer;
+
+    _productosVisiblesCatalogo.clear();
+
+    for (let i = 0; i < productos.length; i++) {
+        const card = productos[i];
+        const rect = card.getBoundingClientRect();
+
+        // Verificar si el card está dentro del viewport (con buffer)
+        const visibleVertical = rect.bottom >= inicio && rect.top <= fin;
+        const visibleHorizontal = rect.right >= 0 && rect.left <= viewportWidth;
+
+        if (visibleVertical && visibleHorizontal) {
+            _productosVisiblesCatalogo.add(card);
+        }
+    }
+
+    console.log(`👁️ Visibles: ${_productosVisiblesCatalogo.size}/${productos.length} (viewport: ${viewportHeight}px)`);
+}
+if (!window.recalcularVisiblesCatalogoManual) {
+    window.recalcularVisiblesCatalogoManual = recalcularVisiblesCatalogoManual;
+}
+/* ============================================================
+   🆕 RECALCULAR VISIBLES (sin observer)
+   ============================================================ */
+function recalcularVisiblesCatalogo() {
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) return;
+
+    const productos = contenedor.querySelectorAll('.producto');
+    if (productos.length === 0) return;
+
+    const scroller = document.getElementById('productos') || contenedor;
+    const scrollTop = scroller.scrollTop || 0;
+    const clientHeight = scroller.clientHeight || window.innerHeight;
+    const buffer = 500;
+
+    const inicio = scrollTop - buffer;
+    const fin = scrollTop + clientHeight + buffer;
+
+    // Limpiar y recalcular
+    _productosVisiblesCatalogo.clear();
+
+    productos.forEach(card => {
+        const top = card.offsetTop;
+        const altura = card.offsetHeight || 48;
+        const bottom = top + altura;
+
+        if (bottom >= inicio && top <= fin) {
+            _productosVisiblesCatalogo.add(card);
+        }
     });
 }
 
@@ -6963,6 +7639,75 @@ function refrescarStockCatalogoOptimizado() {
         console.log(`🔄 Stock: ${actualizados} visibles (${tiempo}ms) ⚠️`);
     }
 }
+
+/* ============================================================
+   🆘 REINICIO DE EMERGENCIA DEL STOCK DINÁMICO
+   Uso: window.reiniciarStockDinamico() en la consola
+   ============================================================ */
+window.reiniciarStockDinamico = function() {
+    console.log('🆘 Reiniciando stock dinámico...');
+
+    const contenedor = document.getElementById('catalogoProductos');
+    if (!contenedor) {
+        console.log('❌ No hay contenedor');
+        return;
+    }
+
+    const productos = contenedor.querySelectorAll('.producto');
+    console.log(`  Productos en DOM: ${productos.length}`);
+
+    // 1. Cachear referencias
+    let cacheadas = 0;
+    productos.forEach(card => {
+        if (!card._stockEl) card._stockEl = card.querySelector('.prod-stock');
+        if (!card._btnEl) card._btnEl = card.querySelector('.agregar');
+        if (!card.dataset.skuUpper && card.dataset.sku) {
+            card.dataset.skuUpper = String(card.dataset.sku).trim().toUpperCase();
+        }
+        if (card._stockEl && card._btnEl) cacheadas++;
+    });
+    console.log(`  ✅ ${cacheadas}/${productos.length} referencias cacheadas`);
+
+    // 2. Llenar el Set de visibles (fallback manual)
+    if (typeof _productosVisiblesCatalogo === 'object') {
+        _productosVisiblesCatalogo.clear();
+    }
+
+    const scroller = document.getElementById('productos') || contenedor;
+    const scrollTop = scroller.scrollTop || 0;
+    const clientHeight = scroller.clientHeight || window.innerHeight;
+    const buffer = 500;
+    const inicio = scrollTop - buffer;
+    const fin = scrollTop + clientHeight + buffer;
+
+    productos.forEach(card => {
+        const top = card.offsetTop;
+        const altura = card.offsetHeight || 48;
+        const bottom = top + altura;
+        if (bottom >= inicio && top <= fin) {
+            _productosVisiblesCatalogo.add(card);
+        }
+    });
+    console.log(`  ✅ ${_productosVisiblesCatalogo.size} visibles rastreados`);
+
+    // 3. Ejecutar refresco
+    console.log('  🔄 Ejecutando refresco...');
+    if (typeof refrescarStockCatalogoOptimizado === 'function') {
+        refrescarStockCatalogoOptimizado();
+    }
+
+    // 4. Verificar resultado
+    let actualizados = 0;
+    productos.forEach(card => {
+        if (card._stockEl && card._stockEl.textContent.includes('disponibles')) {
+            actualizados++;
+        }
+    });
+    console.log(`  ✅ ${actualizados} productos con stock mostrado`);
+    console.log('✅ Reinicio completado');
+};
+
+console.log('🆘 Comando instalado. Uso: reiniciarStockDinamico()');
 /* ============================================================
    25. INICIALIZACIÓN
    ============================================================ */
@@ -7023,6 +7768,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         console.log('✅ App.js cargado correctamente');
     });
+    /* ============================================================
+   🆕 EXPONER FUNCIONES ÚTILES EN window
+   Permite llamarlas desde otros módulos o desde la consola
+   ============================================================ */
+    window.recalcularVisiblesCatalogoManual = recalcularVisiblesCatalogoManual;
+    window.inicializarObserverCatalogo = inicializarObserverCatalogo;
+    window.cachearReferenciasProductos = cachearReferenciasProductos;
+    window.refrescarStockCatalogoOptimizado = refrescarStockCatalogoOptimizado;
+    window.rerenderizarCatalogoDesdeMemoria = rerenderizarCatalogoDesdeMemoria;
+    window.filtrarCatalogo = filtrarCatalogo;
+    window.mostrarResultadosBusqueda = mostrarResultadosBusqueda;
+
+    console.log('🌐 Funciones expuestas en window');
 
     console.log('✅ App.js cargado correctamente');
 });

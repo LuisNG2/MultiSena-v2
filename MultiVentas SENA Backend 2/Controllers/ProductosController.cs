@@ -99,106 +99,84 @@ namespace MultiVentasPOS.Controllers
             }
 
         // ============================================================
-        // GET: api/Productos/catalogo?page=1&pageSize=500&categoriaId=&buscar=
-        // Endpoint optimizado para el catálogo del POS.
-        // ============================================================
-        [HttpGet("catalogo")]
-        public async Task<IActionResult> GetCatalogo(
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 500,
-            [FromQuery] int? categoriaId = null,
-            [FromQuery] string? buscar = null)
-        {
-            page = Math.Max(1, page);
-            pageSize = Math.Clamp(pageSize, 1, 500);
-
-            var query = _context.Productos
-                .AsNoTracking()
-                .Where(p => p.Estado == "Activo");
-
-            if (categoriaId.HasValue)
-                query = query.Where(p => p.IdCategoria == categoriaId.Value);
-
-            if (!string.IsNullOrWhiteSpace(buscar))
+            // GET: api/Productos/catalogo?page=1&pageSize=500&categoriaId=&buscar=
+            // Endpoint optimizado para el catálogo del POS.
+            // ============================================================
+            [HttpGet("catalogo")]
+            public async Task<IActionResult> GetCatalogo(
+                [FromQuery] int page = 1,
+                [FromQuery] int pageSize = 500,
+                [FromQuery] int? categoriaId = null,
+                [FromQuery] string? buscar = null)
             {
-                var b = buscar.Trim();
+                page = Math.Max(1, page);
+                pageSize = Math.Clamp(pageSize, 1, 500);
 
-                // 🎯 Si la búsqueda es corta (<3 caracteres), NO usar Contains (muy lento)
-                // En su lugar, usar StartsWith que sí usa índices
-                if (b.Length >= 3)
+                var query = _context.Productos
+                    .AsNoTracking()
+                    .Where(p => p.Estado == "Activo");
+
+                // 1. Aplicación estricta de filtros dinámicos
+                if (categoriaId.HasValue)
                 {
+                    query = query.Where(p => p.IdCategoria == categoriaId.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(buscar))
+                {
+                    var b = buscar.Trim();
+
+                    // 🎯 Uso de StartsWith() para aprovechar al 100% los índices de la BD.
+                    // Soporta búsquedas desde el inicio tanto cortas como largas de forma eficiente.
                     query = query.Where(p =>
                         p.Nombre.StartsWith(b) ||
                         p.CodigoInterno.StartsWith(b) ||
                         (p.Sku != null && p.Sku.StartsWith(b)));
                 }
-                else
+
+                // 2. Conteo real sobre el QUERY FILTRADO (Evita bugs de paginación)
+                // Para mitigar el conteo lento en tablas masivas, limitamos la evaluación del Count
+                int total = await query.Take(10000).CountAsync();
+
+                // 3. Proyección eficiente previa para aliviar la carga de paginación
+                var items = await query
+                    .OrderByDescending(p => p.VecesVendido)
+                    .ThenBy(p => p.Nombre)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(p => new
+                    {
+                        p.IdProducto,
+                        p.CodigoInterno,
+                        p.Sku,
+                        p.Nombre,
+                        p.IdCategoria,
+                        CategoriaNombre = p.Categoria != null ? p.Categoria.Nombre : null,
+                        p.PrecioVenta,
+                        p.StockActual,
+                        p.StockMinimo,
+                        p.VecesVendido
+                    })
+                    .ToListAsync();
+
+                int totalPages = (int)Math.Ceiling(total / (double)pageSize);
+
+                Response.Headers["X-Total-Count"] = total.ToString();
+                Response.Headers["X-Page"] = page.ToString();
+                Response.Headers["X-Page-Size"] = pageSize.ToString();
+                Response.Headers["X-Total-Pages"] = totalPages.ToString();
+
+                return Ok(new
                 {
-                    // Búsquedas cortas: usar Equals (usa índice exacto)
-                    query = query.Where(p =>
-                        p.Nombre == b ||
-                        p.CodigoInterno == b ||
-                        p.Sku == b);
-                }
+                    items,
+                    total,
+                    page,
+                    pageSize,
+                    totalPages,
+                    hayMas = page * pageSize < total
+                });
             }
 
-            // ⚡ OPTIMIZACIÓN: NO contar toda la tabla si no es necesario
-            // Solo contar cuando el usuario realmente lo necesita (ej: paginación visible)
-            // En la primera página, asumimos que hay más (evita Count lento)
-            int total;
-            bool necesitaConteo = page > 1 || (!string.IsNullOrWhiteSpace(buscar) && buscar.Length >= 3);
-
-            if (necesitaConteo)
-            {
-                total = await query.CountAsync();
-            }
-            else
-            {
-                // Para la primera página sin filtros: contar con TOP para no escanear todo
-                // Si hay 500 registros, sabemos que hay al menos 500 (suficiente para la UI)
-                total = await _context.Productos
-                    .AsNoTracking()
-                    .Where(p => p.Estado == "Activo")
-                    .Take(10000)  // límite máximo de conteo
-                    .CountAsync();
-            }
-
-            // ⚡ PROYECCIÓN LIVIANA + Take ANTES de ordenar con Skip para usar índice
-            var items = await query
-                .OrderByDescending(p => p.VecesVendido)
-                .ThenBy(p => p.Nombre)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(p => new
-                {
-                    p.IdProducto,
-                    p.CodigoInterno,
-                    p.Sku,
-                    p.Nombre,
-                    p.IdCategoria,
-                    CategoriaNombre = p.Categoria != null ? p.Categoria.Nombre : null,
-                    p.PrecioVenta,
-                    p.StockActual,
-                    p.StockMinimo,
-                    p.VecesVendido
-                })
-                .ToListAsync();
-
-            Response.Headers["X-Total-Count"] = total.ToString();
-            Response.Headers["X-Page"] = page.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
-            Response.Headers["X-Total-Pages"] = ((int)Math.Ceiling(total / (double)pageSize)).ToString();
-
-            return Ok(new
-            {
-                items,
-                total,
-                page,
-                pageSize,
-                totalPages = (int)Math.Ceiling(total / (double)pageSize),
-                hayMas = page * pageSize < total
-            });
-        }
         // ============================================================
         // GET: api/Productos/categorias-resumen
         // Devuelve SOLO las categorías con conteo de productos activos.
@@ -633,61 +611,52 @@ namespace MultiVentasPOS.Controllers
 
         [HttpGet("top")]
             [Authorize]
-            public async Task<ActionResult<IEnumerable<ProductoDto>>> GetTopProductos(
-                [FromQuery] int limite = 1000)
+            public async Task<ActionResult<IEnumerable<ProductoDto>>> GetTopProductos([FromQuery] int limite = 1000)
             {
                 limite = Math.Clamp(limite, 10, 2000);
-
+                
                 var hace30Dias = DateTime.UtcNow.AddDays(-30);
+                var haceUnAno = DateTime.UtcNow.AddYears(-1); 
 
-                // -------- 1. IDs con ventas + score ordenado (en SQL) --------
-                var scoresRaw = await _context.DetallesVenta
+                // -------- 1. OBTENER PRODUCTOS TOP ORDENADOS DESDE LA BD --------
+                var productosTopQuery = _context.DetallesVenta
                     .AsNoTracking()
-                    .Where(d => d.Venta != null && d.Venta.Estado == "Completada")
+                    .Where(d => d.Venta != null && d.Venta.Estado == "Completada" && d.Venta.FechaVenta >= haceUnAno)
                     .GroupBy(d => d.IdProducto)
                     .Select(g => new
                     {
                         IdProducto = g.Key,
                         Frecuencia = g.Select(d => d.IdVenta).Distinct().Count(),
                         CantidadTotal = g.Sum(d => d.Cantidad),
-                        CantidadReciente = g
-                            .Where(d => d.Venta!.FechaVenta >= hace30Dias)
-                            .Sum(d => (int?)d.Cantidad) ?? 0
+                        CantidadReciente = g.Where(d => d.Venta!.FechaVenta >= hace30Dias).Sum(d => (int?)d.Cantidad) ?? 0
                     })
-                    .ToListAsync();
+                    .Select(s => new
+                    {
+                        s.IdProducto,
+                        Score = (s.Frecuencia * 0.5) + 
+                                ((double)s.CantidadTotal * 0.3 / 10.0) + 
+                                ((double)s.CantidadReciente * 0.2 / 5.0)
+                    })
+                    .OrderByDescending(x => x.Score)
+                    .Take(limite);
 
-                // Ordenar por score en memoria (ya son pocos: < 20k)
-                var idsTopConVentas = scoresRaw
-                    .OrderByDescending(s =>
-                        (s.Frecuencia * 0.5) +
-                        (s.CantidadTotal * 0.3 / 10.0) +
-                        (s.CantidadReciente * 0.2 / 5.0))
-                    .Select(s => s.IdProducto)
-                    .ToList();
-
-                // -------- 2. Cargar los productos del top --------
-                var dictScore = scoresRaw.ToDictionary(s => s.IdProducto);
-
+                // -------- 2. CARGAR DETALLES DE LOS PRODUCTOS CON VENTAS --------
                 var productosConVentas = await _context.Productos
                     .AsNoTracking()
                     .Include(p => p.Categoria)
-                    .Where(p => p.Estado == "Activo" && idsTopConVentas.Contains(p.IdProducto))
+                    .Where(p => p.Estado == "Activo")
+                    .Join(productosTopQuery, 
+                        p => p.IdProducto, 
+                        t => t.IdProducto, 
+                        (p, t) => new { Producto = p, t.Score })
+                    .OrderByDescending(x => x.Score)
+                    .Select(x => x.Producto)
                     .ToListAsync();
 
-                // Ordenar según score
-                var productosConVentasOrdenados = productosConVentas
-                    .OrderByDescending(p =>
-                    {
-                        if (!dictScore.TryGetValue(p.IdProducto, out var s)) return 0;
-                        return (s.Frecuencia * 0.5) +
-                            (s.CantidadTotal * 0.3 / 10.0) +
-                            (s.CantidadReciente * 0.2 / 5.0);
-                    })
-                    .ToList();
+                int totalConVentas = productosConVentas.Count;
+                var resultado = productosConVentas;
 
-                // -------- 3. Rellenar con productos sin ventas hasta llegar al límite --------
-                var resultado = productosConVentasOrdenados;
-
+                // -------- 3. RELLENAR CON PRODUCTOS SIN VENTAS --------
                 if (resultado.Count < limite)
                 {
                     var faltantes = limite - resultado.Count;
@@ -705,7 +674,7 @@ namespace MultiVentasPOS.Controllers
                     resultado.AddRange(productosSinVentas);
                 }
 
-                // -------- 4. Mapear a DTO --------
+                // -------- 4. MAPEAR A DTO (PROYECTO LIMPIO) --------
                 var dtos = resultado.Select(p => new ProductoDto
                 {
                     IdProducto = p.IdProducto,
@@ -728,14 +697,14 @@ namespace MultiVentasPOS.Controllers
 
                 _logger.LogInformation(
                     "Top productos: {ConVentas} con ventas, {SinVentas} sin ventas, total {Total}",
-                    productosConVentasOrdenados.Count,
-                    resultado.Count - productosConVentasOrdenados.Count,
+                    totalConVentas,
+                    resultado.Count - totalConVentas,
                     dtos.Count);
 
                 return Ok(dtos);
             }
 
-                // ============================================================
+        // ============================================================
         // GET: api/Productos/generar-codigo?nombre=xxx&idCategoria=1
         // Genera un código interno único basado en el nombre y categoría.
         // Formato: [CAT]-[NOM]-[NNN]
